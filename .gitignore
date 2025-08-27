@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.env
+.env
+venv/
+ENV/
+env/
+*.egg-info/
+*.egg
+*.db
+*.sqlite3
+instance/
+
+# Flask
+*.log
+*.pot
+*.mo
+*.pyc
+*.pyo
+*.pyd
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Mac
+.DS_Store
+
+# Others
+*.swp
+*.bak
+*.tmp
+
+# Node
+node_modules/
