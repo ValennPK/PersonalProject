@@ -1,9 +1,11 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
+from flask_bootstrap import Bootstrap
 
 db = SQLAlchemy()
 migrate = Migrate()
+bootstrap = Bootstrap()
 
 def create_app(config_class=None):
     if config_class is None:
@@ -14,7 +16,7 @@ def create_app(config_class=None):
     app.config.from_object(config_class)
 
     db.init_app(app)
-
+    bootstrap.init_app(app)
     migrate.init_app(app, db)
 
     with app.app_context():
@@ -24,5 +26,8 @@ def create_app(config_class=None):
     # Register blueprints
     from .routes import main
     app.register_blueprint(main)
+
+    from .auth import auth
+    app.register_blueprint(auth, url_prefix='/auth')
 
     return app
