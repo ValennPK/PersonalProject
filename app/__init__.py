@@ -2,6 +2,12 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_bootstrap import Bootstrap
+from flask_login import LoginManager
+
+login_manager = LoginManager()
+login_manager.session_protection = "strong"
+login_manager.login_view = 'auth.login'
+
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -18,6 +24,7 @@ def create_app(config_class=None):
     db.init_app(app)
     bootstrap.init_app(app)
     migrate.init_app(app, db)
+    login_manager.init_app(app)
 
     with app.app_context():
         from app import models

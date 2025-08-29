@@ -1,4 +1,10 @@
 from app import db
+from . import login_manager
+from flask import current_app
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -21,7 +27,17 @@ class User(db.Model):
     def verify_password(self, password):
         from werkzeug.security import check_password_hash
         return check_password_hash(self.password_hash, password)
-
+        
+    def __init__(self, **kwargs):
+            super(User, self).__init__(**kwargs)
+            if self.role is None:
+                # Rol de admin
+                if hasattr(current_app, 'config') and self.email == current_app.config.get('FLASK_ADMIN'):
+                    self.role = Role.query.filter_by(permissions=0xFF).first()
+                # Rol por defecto
+                if self.role is None:
+                    self.role = Role.query.filter_by(default=True).first()
+    
     def __repr__(self):
         return f'<User {self.username}>'
     
@@ -30,7 +46,25 @@ class Role(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True, nullable=False)
+    default = db.Column(db.Boolean, default=False, index=True)
+    permissions = db.Column(db.Integer)
     users = db.relationship('User', backref='role', lazy='dynamic')
 
     def __repr__(self):
         return f'<Role {self.name}>'
+    
+    @staticmethod
+    def insert_roles():
+        roles = {
+            'User': (0x01, True),
+            'Moderator': (0x02, False),
+            'Administrator': (0xFF, False)
+        }
+        for r in roles:
+            role = Role.query.filter_by(name=r).first()
+            if role is None:
+                role = Role(name=r)
+            role.permissions = roles[r][0]
+            role.default = roles[r][1]
+            db.session.add(role)
+        db.session.commit()
