@@ -26,9 +26,21 @@ def create_app(config_class=None):
     migrate.init_app(app, db)
     login_manager.init_app(app)
 
+
+
     with app.app_context():
         from app import models
         db.create_all()
+
+    from app.models import User, Role # Import here to avoid circular import issues
+    @app.cli.command("initdb")
+    def initdb():
+        """Inicializa la base con roles por defecto."""
+        if Role.query.count() == 0:
+            Role.insert_roles()
+            print("Roles insertados.")
+        else:
+            print("Ya existen roles.")
 
     # Register blueprints
     from .routes import main
