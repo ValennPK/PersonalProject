@@ -26,8 +26,6 @@ def create_app(config_class=None):
     migrate.init_app(app, db)
     login_manager.init_app(app)
 
-
-
     with app.app_context():
         from app import models
         db.create_all()

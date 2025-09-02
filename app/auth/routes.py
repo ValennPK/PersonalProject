@@ -11,14 +11,15 @@ auth = Blueprint('auth', __name__)
 
 @auth.route('/login', methods=['GET', 'POST'])
 def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('main.user', username=current_user.username))
     form = LoginForm()
-    # status = form.validate_on_submit()
-    # print("validate_on_submit",status)
-    # print("form errors",form.errors)
     if form.validate_on_submit():
         login_user(form.user, remember=form.remember_me.data)
         flash('Logged in successfully.')
-        return redirect(url_for('main.user', username=current_user.username))
+        # print(f"User just logged in: {form.user.username}")
+        next_page = request.args.get('next')
+        return redirect(next_page or url_for('main.user', username=form.user.username))
     return render_template('auth/login.html', form=form)
 
 @auth.route('/logout')
@@ -40,10 +41,11 @@ def register():
         return redirect(url_for('auth.login'))
     return render_template('auth/register.html', form=form)
 
-@auth.before_app_request
-def before_request():
-    if current_user.is_authenticated:
-        current_user.ping()
-        if not current_user.confirmed and request.endpoint[:5]:
-            return redirect(url_for('main.user', username=current_user.username))
-        
+# @auth.before_app_request
+# def before_request():
+#     if current_user.is_authenticated:
+#         current_user.ping()
+#         if not current_user.confirmed:
+#             # Evitar redirigir si ya estamos en la página de confirmación
+#             if request.endpoint != 'auth.unconfirmed':
+#                 return redirect(url_for('auth.unconfirmed'))

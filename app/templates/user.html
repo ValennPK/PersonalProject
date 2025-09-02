@@ -1,5 +1,8 @@
-{% block page_content %}
-<h1>Hello, {{ user.username }}!</h1>
+{% extends "base.html" %}
+
+{% block title %}User{% endblock %}
+
+{% block content %}
+<h2>Hello, {{ user.username }}!</h2>
 <p>Email: {{ user.email }}</p>
-<p>Last seen: {{ user.last_seen }}</p>
 {% endblock %}
