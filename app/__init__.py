@@ -26,6 +26,7 @@ def create_app(config_class=None):
     migrate.init_app(app, db)
     login_manager.init_app(app)
 
+
     with app.app_context():
         from app import models
         db.create_all()
@@ -46,5 +47,8 @@ def create_app(config_class=None):
 
     from .auth import auth
     app.register_blueprint(auth, url_prefix='/auth')
+
+    from .ai import ai
+    app.register_blueprint(ai, url_prefix='/ai')
 
     return app
