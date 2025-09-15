@@ -1,0 +1,7 @@
+simple CNN base model:
+
+Conv2D → ReLU → MaxPooling
+Conv2D → ReLU → MaxPooling
+Flatten
+Dense → ReLU
+Dense → Sigmoid 
