@@ -43,3 +43,4 @@ node_modules/
 
 #AI
 /app/ai/datasets/
+/app/ai/uploads/

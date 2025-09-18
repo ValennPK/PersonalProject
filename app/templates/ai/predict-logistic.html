@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<h2>Logistic Regression Prediction</h2>
+<form method="post" action="{{ url_for('ai.predict_logistic') }}">
+    {{ form.hidden_tag() }}
+    <div>
+        {{ form.age.label }}
+        {{ form.age(size=5) }}
+    </div>
+    <div>
+        {{ form.ages_of_study.label }}
+        {{ form.ages_of_study(size=5) }}
+    </div>
+    {{ form.submit() }}
+</form>
+<div>
+{% if result %}
+    <h3>Resultado:</h3>
+    <p>Edad: {{ result.age }}</p>
+    <p>Años de estudio: {{ result.ages_of_study }}</p>
+    <p>Predicción: {{ result.prediction }} probability to get work</p>
+    <p>Probabilidad: {{ result.probability }}</p>
+{% endif %}
+</div>
+{% endblock %}
+

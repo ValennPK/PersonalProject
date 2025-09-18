@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<h2>Ai menu!</h2>
+<p>Choose an option:</p>
+<ul>
+    <li><a href="{{ url_for('ai.predict_logistic') }}">Predict Logistic Regression</a></li>
+    <li><a href="{{ url_for('ai.predict_cat_vs_dog') }}">Predict Cat vs Dog (Under Construction)</a></li>
+</ul>
+{% endblock %}
