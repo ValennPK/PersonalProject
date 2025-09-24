@@ -7,6 +7,7 @@ __pycache__/
 *.env
 .env
 venv/
+venv310/
 ENV/
 env/
 *.egg-info/
@@ -43,4 +44,3 @@ node_modules/
 
 #AI
 /app/ai/datasets/
-/app/ai/uploads/
