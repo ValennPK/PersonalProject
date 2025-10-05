@@ -1,0 +1,11 @@
+Hola {{ user.username }},
+
+Gracias por registrarte.
+
+Por favor, confirmá tu cuenta haciendo clic en el siguiente enlace:
+
+{{ confirm_url }}
+
+Si no creaste esta cuenta, simplemente ignorá este mensaje.
+
+Este enlace expirará en 1 hora por motivos de seguridad.

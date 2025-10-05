@@ -18,8 +18,8 @@ def send_email(to, subject, template, **kwargs):
         recipients=[to] if isinstance(to, str) else to
         )
     
-    msg.body = render_template(f"email/{template}.txt", **kwargs)
-    msg.html = render_template(f"email/{template}.html", **kwargs)
+    msg.body = render_template(f"auth/{template}.txt", **kwargs)
+    msg.html = render_template(f"auth/{template}.html", **kwargs)
 
     thr = threading.Thread(target=send_async_email, args=[app, msg])
     thr.start()

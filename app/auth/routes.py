@@ -5,6 +5,7 @@ from .forms import LoginForm, RegistrationForm
 from app.models import User
 from app import db
 from flask_login import login_user, logout_user, login_required, current_user
+from app.mail import send_email
 
 
 auth = Blueprint('auth', __name__)
@@ -36,16 +37,43 @@ def register():
     if form.validate_on_submit():
         user = User(username=form.username.data, email=form.email.data, password=form.password.data)
         db.session.add(user)
-        flash('Congratulations, you are now a registered user!')
         db.session.commit()
+
+        #token
+        token = user.generate_confirmation_token()
+
+        #send email
+        send_email(
+            to = user.email,
+            subject = "Confirm your account",
+            template = "confirm",
+            user = user,
+            confirm_url = url_for('auth.confirm', token=token, _external=True)
+        )
+
+        flash('A confirmation email has been sent to you by email.')
         return redirect(url_for('auth.login'))
+
     return render_template('auth/register.html', form=form)
 
-# @auth.before_app_request
-# def before_request():
-#     if current_user.is_authenticated:
-#         current_user.ping()
-#         if not current_user.confirmed:
-#             # Evitar redirigir si ya estamos en la página de confirmación
-#             if request.endpoint != 'auth.unconfirmed':
-#                 return redirect(url_for('auth.unconfirmed'))
+@auth.route('/confirm/<token>')
+def confirm(token):
+    user_id = User.confirm_token(token)
+    if user_id is None:
+        flash('The confirmation link is invalid or has expired.', 'danger')
+        return redirect(url_for('main.index'))
+    
+    user = User.query.get(user_id)
+    if user is None:
+        flash('Invalid user.', 'danger')
+        return redirect(url_for('main.index'))
+    
+    if user.confirmed:
+        flash('Account already confirmed. Please login.', 'success')
+    else:
+        user.confirmed = True
+        db.session.add(user)
+        db.session.commit()
+        flash('You have confirmed your account. Thanks!', 'success')
+
+    return redirect(url_for('auth.login'))
