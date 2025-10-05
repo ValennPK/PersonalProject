@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, render_template, current_app, request
-from flask_login import login_required
+from ..decorators import confirmed_required
 from PIL import Image
 import joblib
 import numpy as np
@@ -12,16 +12,19 @@ ai = Blueprint('ai', __name__)
 # UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 
 @ai.route('/status', methods=['GET'])
+@confirmed_required
 def status():
     return jsonify({"status": "AI feature is OK!"}), 200
 
-# @login_required
+
 @ai.route('/menu', methods=['GET'])
+@confirmed_required
 def menu():
     return render_template('/ai/menu.html')
 
-# @login_required
+
 @ai.route('/predict_logistic', methods=['POST', 'GET'])
+@confirmed_required
 def predict_logistic():
     form = LogisticPredictionForm()
     result = None
@@ -68,8 +71,9 @@ def predict_logistic():
 
     return render_template('ai/predict-logistic.html', form=form, result= result)
     
-# @login_required
+
 @ai.route('/predict-cat-vs-dog', methods=['POST', 'GET'])
+@confirmed_required
 def predict_cat_vs_dog():
     form = CatVsDogPredictionForm()
     result = None

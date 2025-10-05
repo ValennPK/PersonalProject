@@ -21,6 +21,9 @@
                     <a href="{{ url_for('auth.register') }}">Register</a>
                 {% endif %}
             {% endif %}
+            {% if current_user.is_authenticated and not current_user.confirmed %}
+                <a href="{{ url_for('auth.resend_confirmation') }}">Resend Confirmation</a>
+            {% endif %}
 
 
         </nav>

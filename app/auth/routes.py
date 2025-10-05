@@ -19,17 +19,18 @@ def login():
             flash('Invalid username or password.', 'danger')
             return redirect(url_for('auth.login'))
 
+        login_user(user, remember=form.remember_me.data)
+
         if not user.confirmed:
             flash('Please confirm your account first.', 'warning')
-            return redirect(url_for('main.index'))
+            return redirect(url_for('auth.resend_confirmation'))
 
-        login_user(user, remember=form.remember_me.data)
         flash('Logged in successfully.')
-
         next_page = request.args.get('next')
         return redirect(next_page or url_for('main.user', username=user.username))
 
     return render_template('auth/login.html', form=form)
+
 
 
 @auth.route('/logout')
@@ -86,3 +87,24 @@ def confirm(token):
         flash('You have confirmed your account. Thanks!', 'success')
 
     return redirect(url_for('auth.login'))
+
+@auth.route('/resend-confirmation', methods=['GET', 'POST'])
+@login_required
+def resend_confirmation():
+    if current_user.confirmed:
+        flash('Your account is already confirmed.', 'info')
+        return redirect(url_for('main.index'))
+
+    if request.method == 'POST':
+        token = current_user.generate_confirmation_token()
+        send_email(
+            to = current_user.email,
+            subject = "Confirm your account",
+            template = "confirm",
+            user = current_user,
+            confirm_url = url_for('auth.confirm', token=token, _external=True)
+        )
+        flash('A new confirmation email has been sent.', 'success')
+        return redirect(url_for('main.index'))
+
+    return render_template('auth/resend_confirmation.html')
