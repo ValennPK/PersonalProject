@@ -1,12 +1,20 @@
 {% extends "base.html" %}
 
-{% block title %}Login{% endblock %}
+{% block title %}AI Menu{% endblock %}
 
 {% block content %}
-<h2>Ai menu!</h2>
-<p>Choose an option:</p>
-<ul>
-    <li><a href="{{ url_for('ai.predict_logistic') }}">Predict Logistic Regression</a></li>
-    <li><a href="{{ url_for('ai.predict_cat_vs_dog') }}">Predict Cat vs Dog (Under Construction)</a></li>
-</ul>
+<div class="card">
+    <div class="card-body">
+        <h2 class="card-title">AI Menu</h2>
+        <p class="card-text">Choose an option:</p>
+        <ul class="list-group list-group-flush">
+            <li class="list-group-item">
+                <a href="{{ url_for('ai.predict_logistic') }}" class="btn btn-outline-primary w-100">Predict Logistic Regression</a>
+            </li>
+            <li class="list-group-item">
+                <a href="{{ url_for('ai.predict_cat_vs_dog') }}" class="btn btn-outline-secondary w-100">Predict Cat vs Dog (Under Construction)</a>
+            </li>
+        </ul>
+    </div>
+</div>
 {% endblock %}
