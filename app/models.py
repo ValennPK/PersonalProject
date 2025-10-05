@@ -2,6 +2,7 @@ from app import db
 from . import login_manager
 from flask import current_app
 from flask_login import UserMixin
+from itsdangerous import URLSafeTimedSerializer as Serializer
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -32,6 +33,18 @@ class User(UserMixin, db.Model):
     def verify_password(self, password):
         from werkzeug.security import check_password_hash
         return check_password_hash(self.password_hash, password)
+    
+    def generate_confirmation_token(self, expiration=3600):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        return s.dumps({'confirm': self.id})
+    
+    def confirm_token(token, expiration=3600):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        try:
+            data = s.loads(token, max_age=expiration)
+        except Exception:
+            return None
+        return data.get('confirm')
     
     def ping(self):
         self.last_seen = db.func.now()
