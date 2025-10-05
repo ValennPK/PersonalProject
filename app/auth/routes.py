@@ -12,16 +12,25 @@ auth = Blueprint('auth', __name__)
 
 @auth.route('/login', methods=['GET', 'POST'])
 def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('main.user', username=current_user.username))
     form = LoginForm()
     if form.validate_on_submit():
-        login_user(form.user, remember=form.remember_me.data)
+        user = form.user
+        if not user:
+            flash('Invalid username or password.', 'danger')
+            return redirect(url_for('auth.login'))
+
+        if not user.confirmed:
+            flash('Please confirm your account first.', 'warning')
+            return redirect(url_for('main.index'))
+
+        login_user(user, remember=form.remember_me.data)
         flash('Logged in successfully.')
-        # print(f"User just logged in: {form.user.username}")
+
         next_page = request.args.get('next')
-        return redirect(next_page or url_for('main.user', username=form.user.username))
+        return redirect(next_page or url_for('main.user', username=user.username))
+
     return render_template('auth/login.html', form=form)
+
 
 @auth.route('/logout')
 @login_required
