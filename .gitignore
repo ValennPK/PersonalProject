@@ -44,3 +44,6 @@ node_modules/
 
 #AI
 /app/ai/datasets/
+*.jp2
+*.tif
+*.tiff
