@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import rasterio
-from utilities import fetch_power_solar
+from utilities import fetch_NASA_data
 
 
 # # rutas a tus bandas
@@ -26,10 +26,14 @@ from utilities import fetch_power_solar
 
 # Ejemplo de fetch_power_solar
 # Ejemplo de uso:
-lat = -33.0
-lon = -60.0
-start = "20250101"
-end = "20250131"
-resp = fetch_power_solar(lat, lon, start, end)
-print(resp.json())  # o resp.text para ver la respuesta cruda
+
+
+latitude = 19.4326
+longitude = -99.1332
+start = "20251001"
+end = "20251002"
+
+
+data = fetch_NASA_data(latitude, longitude, start, end)
+print (data)
 
