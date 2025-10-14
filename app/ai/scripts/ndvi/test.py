@@ -1,7 +1,10 @@
+import ee
 import numpy as np
 import matplotlib.pyplot as plt
-import rasterio
-from utilities import fetch_NASA_data, calc_et0_fao56, fetch_NDVI_ee
+from utilities import fetch_NDVI_ee
+import requests
+from PIL import Image
+from io import BytesIO
 
 
 # # rutas a tus bandas
@@ -27,14 +30,6 @@ from utilities import fetch_NASA_data, calc_et0_fao56, fetch_NDVI_ee
 # Ejemplo de fetch_power_solar
 # Ejemplo de uso:
 
-
-lat = -31.4167
-lon = -64.1833
-start = "20250101"
-end = "20250103"
-
-
-
 # data = fetch_NASA_data(lat, lon, start, end)
 # print("Datos obtenidos de la NASA POWER API:")
 # print (data)
@@ -49,5 +44,19 @@ lon = -64.1833
 start = "20251001"
 end = "20251010"
 
-ndvi_data = fetch_NDVI_ee(lat, lon, start, end)
-print(ndvi_data)
+ndvi_image = fetch_NDVI_ee(lat, lon, start, end)
+
+ndvi_url = ndvi_image.getThumbURL({
+    'min': 0.0,
+    'max': 1.0,
+    'palette': ['green', 'white', 'red'],
+    'dimensions': 512
+})
+
+response = requests.get(ndvi_url)
+img = Image.open(BytesIO(response.content))
+
+plt.imshow(img)
+plt.title("NDVI promedio del período")
+plt.axis('off')
+plt.show()

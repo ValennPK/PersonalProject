@@ -113,12 +113,14 @@ def fetch_NDVI_ee(lat, lon, start, end, cloud_thresh=50):
     start_dt = datetime.strptime(start, "%Y%m%d").strftime("%Y-%m-%d")
     end_dt   = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
 
-    point = ee.Geometry.Point([lon, lat]).buffer(20)
+    point = ee.Geometry.Point([lon, lat])
+    region = point.buffer(1000).bounds()  # Área de 1 km alrededor del punto
 
-    collection = (ee.ImageCollection("COPERNICUS/S2_SR")
-                  .filterBounds(point)
-                  .filterDate(start_dt, end_dt)
-                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_thresh)))
+    collection = (
+        ee.ImageCollection("COPERNICUS/S2_SR")
+        .filterBounds(region)
+        .filterDate(start_dt, end_dt)
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_thresh)))
 
     # Agregar NDVI
     def add_ndvi(img):
@@ -127,23 +129,28 @@ def fetch_NDVI_ee(lat, lon, start, end, cloud_thresh=50):
 
     ndvi_collection = collection.map(add_ndvi)
 
-    # Reducir cada imagen a un dict {fecha: NDVI}
-    def reduce_to_dict(img):
-        mean = img.select('NDVI').reduceRegion(
-            reducer=ee.Reducer.mean(),
-            geometry=point,
-            scale=10
-        ).get('NDVI')
-        date = ee.Date(img.get('system:time_start')).format('YYYYMMdd')
-        return ee.Feature(None, {'date': date, 'NDVI': mean})
+    # # Reducir cada imagen a un dict {fecha: NDVI}
+    # def reduce_to_dict(img):
+    #     mean = img.select('NDVI').reduceRegion(
+    #         reducer=ee.Reducer.mean(),
+    #         geometry=point,
+    #         scale=10
+    #     ).get('NDVI')
+    #     date = ee.Date(img.get('system:time_start')).format('YYYYMMdd')
+    #     return ee.Feature(None, {'date': date, 'NDVI': mean})
 
-    feature_collection = ndvi_collection.map(reduce_to_dict)
+    # feature_collection = ndvi_collection.map(reduce_to_dict)
 
-    # Obtener lista de features como diccionarios
-    features = feature_collection.getInfo()['features']
-    ndvi_dict = {f['properties']['date']: f['properties']['NDVI'] for f in features if f['properties']['NDVI'] is not None}
+    # # Obtener lista de features como diccionarios
+    # features = feature_collection.getInfo()['features']
+    # ndvi_dict = {f['properties']['date']: f['properties']['NDVI'] for f in features if f['properties']['NDVI'] is not None}
 
-    return ndvi_dict
+    # return ndvi_dict
+
+    ndvi_mean = ndvi_collection.select('NDVI').mean()
+
+    return ndvi_mean.clip(region)
+
 
 
 
