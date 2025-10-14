@@ -1,6 +1,10 @@
 import math
 import requests
 import pandas as pd
+import ee
+from datetime import datetime
+from dotenv import load_dotenv
+import os
 
 import requests
 
@@ -88,23 +92,61 @@ def calc_et0_fao56(data):
 
     return results
 
+def fetch_NDVI_ee(lat, lon, start, end, cloud_thresh=50):
+    """
+    Obtiene datos de NDVI desde Google Earth Engine usando la colección Sentinel-2.
+    Parámetros:
+        lat, lon (float): Coordenadas en grados decimales
+        start, end (str): Fechas en formato 'YYYYMMDD'
+        cloud_thresh (int): Umbral de porcentaje de nubes para filtrar imágenes
+    Retorna:
+        dict: Diccionario con fechas y valores medios de NDVI
+    """
+    
+    load_dotenv()
+    try:
+        ee.Initialize(project=os.getenv("PROJECT_ID"))
+    except Exception:
+        ee.Authenticate()
+        ee.Initialize(project=os.getenv("PROJECT_ID"))
+
+    start_dt = datetime.strptime(start, "%Y%m%d").strftime("%Y-%m-%d")
+    end_dt   = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
+
+    point = ee.Geometry.Point([lon, lat]).buffer(20)
+
+    collection = (ee.ImageCollection("COPERNICUS/S2_SR")
+                  .filterBounds(point)
+                  .filterDate(start_dt, end_dt)
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_thresh)))
+
+    # Agregar NDVI
+    def add_ndvi(img):
+        ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
+        return img.addBands(ndvi)
+
+    ndvi_collection = collection.map(add_ndvi)
+
+    # Reducir cada imagen a un dict {fecha: NDVI}
+    def reduce_to_dict(img):
+        mean = img.select('NDVI').reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=point,
+            scale=10
+        ).get('NDVI')
+        date = ee.Date(img.get('system:time_start')).format('YYYYMMdd')
+        return ee.Feature(None, {'date': date, 'NDVI': mean})
+
+    feature_collection = ndvi_collection.map(reduce_to_dict)
+
+    # Obtener lista de features como diccionarios
+    features = feature_collection.getInfo()['features']
+    ndvi_dict = {f['properties']['date']: f['properties']['NDVI'] for f in features if f['properties']['NDVI'] is not None}
+
+    return ndvi_dict
 
 
-def parse_NASA_data(resp):
-    """
-    Convierte la respuesta JSON de la NASA en un DataFrame diario.
-    """
-    data = resp.json()
-    params = data["properties"]["parameter"]
-    
-    # Convertir cada parámetro en un DataFrame temporal
-    df_dict = {}
-    for key, val in params.items():
-        df_dict[key] = pd.Series(val, name=key)
-    
-    # Combinar en un solo DataFrame
-    df = pd.concat(df_dict.values(), axis=1)
-    df.index = pd.to_datetime(df_dict[list(df_dict.keys())[0]].index)  # index = fechas
-    return df
+
+
 
 

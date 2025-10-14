@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import rasterio
-from utilities import fetch_NASA_data, calc_et0_fao56
+from utilities import fetch_NASA_data, calc_et0_fao56, fetch_NDVI_ee
 
 
 # # rutas a tus bandas
@@ -28,17 +28,26 @@ from utilities import fetch_NASA_data, calc_et0_fao56
 # Ejemplo de uso:
 
 
-latitude = 19.4326
-longitude = -99.1332
+lat = -31.4167
+lon = -64.1833
+start = "20250101"
+end = "20250103"
+
+
+
+# data = fetch_NASA_data(lat, lon, start, end)
+# print("Datos obtenidos de la NASA POWER API:")
+# print (data)
+
+# # Calcular ET0 usando la función
+# data_et0 = calc_et0_fao56(data)
+# print("Datos con ET0 calculado:")
+# print(data_et0)
+
+lat = -31.4167
+lon = -64.1833
 start = "20251001"
-end = "20251002"
+end = "20251010"
 
-
-data = fetch_NASA_data(latitude, longitude, start, end)
-print("Datos obtenidos de la NASA POWER API:")
-print (data)
-
-# Calcular ET0 usando la función
-data_et0 = calc_et0_fao56(data)
-print("Datos con ET0 calculado:")
-print(data_et0)
+ndvi_data = fetch_NDVI_ee(lat, lon, start, end)
+print(ndvi_data)
