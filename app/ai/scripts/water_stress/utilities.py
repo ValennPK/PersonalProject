@@ -92,29 +92,23 @@ def calc_et0_fao56(data):
 
     return results
 
-def fetch_NDVI_ee(lat, lon, start, end, cloud_thresh=50):
+def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
     """
-    Obtiene una imagen NDVI desde Google Earth Engine (Sentinel-2)
-    y devuelve una URL directa a un PNG (visible en un <img>).
+    Devuelve un objeto ee.Image con el NDVI promedio
+    de un rectángulo definido por dos puntos.
     """
-
     load_dotenv()
-
     try:
         ee.Initialize(project=os.getenv("PROJECT_ID"))
     except Exception:
         ee.Authenticate()
         ee.Initialize(project=os.getenv("PROJECT_ID"))
 
-    # Convertir fechas al formato YYYY-MM-DD
     start_dt = datetime.strptime(start, "%Y%m%d").strftime("%Y-%m-%d")
-    end_dt = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
+    end_dt   = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
 
-    # Región de interés (1 km alrededor del punto)
-    point = ee.Geometry.Point([lon, lat])
-    region = point.buffer(1000).bounds()
+    region = ee.Geometry.Rectangle([lon1, lat1, lon2, lat2])
 
-    # Cargar colección Sentinel-2
     collection = (
         ee.ImageCollection("COPERNICUS/S2_SR")
         .filterBounds(region)
@@ -122,7 +116,6 @@ def fetch_NDVI_ee(lat, lon, start, end, cloud_thresh=50):
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_thresh))
     )
 
-    # Calcular NDVI
     def add_ndvi(img):
         ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
         return img.addBands(ndvi)
@@ -130,21 +123,57 @@ def fetch_NDVI_ee(lat, lon, start, end, cloud_thresh=50):
     ndvi_collection = collection.map(add_ndvi)
     ndvi_mean = ndvi_collection.select("NDVI").mean()
 
-    # Parámetros visuales
-    vis_params = {"min": 0, "max": 1, "palette": ["red", "yellow", "green"]}
+    return ndvi_mean, region  # devolvemos imagen y región para generar thumbnail luego
 
-    # Generar una imagen PNG (thumbnail) con getThumbURL
+
+def calc_water_stress(ndvi_image, et0_value, region):
+    """
+    Calcula el Water Stress Index (WSI) a partir de una imagen NDVI y un valor diario de ET0.
+    
+    Parámetros:
+        ndvi_image: ee.Image con NDVI (0-1)
+        et0_value: float o ee.Number (evapotranspiración de referencia diaria)
+        region: ee.Geometry (región de interés)
+
+    Retorna:
+        ee.Image: WSI (0 = sin estrés, 1 = estrés máximo)
+    """
+    # Recortar la imagen a la región
+    ndvi = ndvi_image.clip(region)
+
+    # Coeficiente de cultivo aproximado a partir de NDVI
+    kc = ndvi.multiply(1.25).subtract(0.2).clamp(0.1, 1.2)  # evitar kc = 0
+
+    # Evapotranspiración del cultivo
+    etc = kc.multiply(et0_value)
+
+    # Fracción de agua real transpirada basada en NDVI
+    # Se normaliza NDVI a [0.1, 1] para que siempre haya algo de ETa
+    frac = ndvi.clamp(0.1, 1)
+    eta = etc.multiply(frac)
+
+    # WSI = (ETc - ETa) / ETc
+    wsi = etc.subtract(eta).divide(etc).clamp(0, 1)
+
+    # Opcional: agregar un estilo de visualización para debug
+    # vis_params = {'min':0, 'max':1, 'palette':['green','yellow','red']}
+    # wsi_vis = wsi.visualize(**vis_params)
+
+    return wsi
+
+
+def image_to_url(image, region, dimensions=512):
+    """
+    Convierte un ee.Image NDVI en una URL PNG para mostrar en un <img>.
+    """
     thumb_params = {
         "min": 0,
         "max": 1,
-        "dimensions": 512,
+        "dimensions": dimensions,
         "region": region.getInfo()["coordinates"],
         "palette": ["red", "yellow", "green"],
     }
-
-    ndvi_url = ndvi_mean.getThumbURL(thumb_params)
-
-    return ndvi_url
+    return image.getThumbURL(thumb_params)
 
 
 

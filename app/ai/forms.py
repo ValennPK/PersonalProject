@@ -17,8 +17,10 @@ class CatVsDogPredictionForm(FlaskForm):
     submit = SubmitField('Predict')
 
 class WaterStressForm(FlaskForm):
-    latitude = FloatField('Latitude', validators=[DataRequired()])
-    longitude = FloatField('Longitude', validators=[DataRequired()])
-    start_date = DateField('Start Date', format='%Y-%m-%d', validators=[DataRequired()])
-    end_date = DateField('End Date', format='%Y-%m-%d', validators=[DataRequired()])
-    submit = SubmitField('Analyze')
+    lat1 = FloatField('Latitud esquina 1', validators=[DataRequired()])
+    lon1 = FloatField('Longitud esquina 1', validators=[DataRequired()])
+    lat2 = FloatField('Latitud esquina 2', validators=[DataRequired()])
+    lon2 = FloatField('Longitud esquina 2', validators=[DataRequired()])
+    start_date = DateField('Fecha inicio', format='%Y-%m-%d', validators=[DataRequired()])
+    end_date = DateField('Fecha fin', format='%Y-%m-%d', validators=[DataRequired()])
+    submit = SubmitField('Analizar')

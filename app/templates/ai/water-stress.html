@@ -2,57 +2,130 @@
 
 {% block title %}Water Stress Map{% endblock %}
 
+{% block head %}
+  {{ super() }}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+{% endblock %}
+
 {% block content %}
-<div class="card">
+<div class="card shadow-sm">
     <div class="card-body">
-        <h2 class="card-title">Water Stress Map</h2>
+        <h2 class="card-title mb-4">Water Stress Map</h2>
+
         <form method="post" action="{{ url_for('ai.water_stress') }}">
             {{ form.hidden_tag() }}
-            <div class="mb-3">
-                {{ form.latitude.label(class="form-label") }}
-                {{ form.latitude(class="form-control", placeholder="Latitud") }}
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    {{ form.start_date.label(class="form-label") }}
+                    {{ form.start_date(class="form-control", type="date") }}
+                </div>
+                <div class="col-md-6 mb-3">
+                    {{ form.end_date.label(class="form-label") }}
+                    {{ form.end_date(class="form-control", type="date") }}
+                </div>
             </div>
+
             <div class="mb-3">
-                {{ form.longitude.label(class="form-label") }}
-                {{ form.longitude(class="form-control", placeholder="Longitud") }}
+                <label class="form-label fw-bold">Seleccioná un área en el mapa:</label>
+                <div id="map" style="height: 500px; border-radius: 10px;"></div>
             </div>
-            <div class="mb-3">
-                {{ form.start_date.label(class="form-label") }}
-                {{ form.start_date(class="form-control", type="date") }}
-            </div>
-            <div class="mb-3">
-                {{ form.end_date.label(class="form-label") }}
-                {{ form.end_date(class="form-control", type="date") }}
-            </div>
-            <button type="submit" class="btn btn-primary">{{ form.submit.label.text }}</button>
+
+            <input type="hidden" name="lat1" id="lat1">
+            <input type="hidden" name="lon1" id="lon1">
+            <input type="hidden" name="lat2" id="lat2">
+            <input type="hidden" name="lon2" id="lon2">
+
+            <button type="submit" class="btn btn-primary w-100 mt-3">
+                {{ form.submit.label.text }}
+            </button>
         </form>
+    </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+    <div class="card-body">
         {% if result %}
-        <div class="mt-4 alert alert-info">
-            <h3>Resultado:</h3>
-            <p><strong>latitude:</strong> {{ result.latitude }}</p>
-            <p><strong>longitude:</strong> {{ result.longitude }}</p>
-            <p><strong>start_date:</strong> {{ result.start_date }}</p>
-            <p><strong>end_date:</strong> {{ result.end_date }}</p>
+        <div  class="mt-4">
+            <h3>Datos Ingresados:</h3>
+            <p><strong>Lat1:</strong> {{ result.lat1 }}</p>
+            <p><strong>Lon1:</strong> {{ result.lon1 }}</p>
+            <p><strong>Lat2:</strong> {{ result.lat2 }}</p>
+            <p><strong>Lon2:</strong> {{ result.lon2 }}</p>
+            <p><strong>Start Date:</strong> {{ result.start_date }}</p>
+            <p><strong>End Date:</strong> {{ result.end_date }}</p>
         </div>
         {% endif %}
-        {% if NASA_data %}
+
+        <!-- {% if NASA_data %}
         <div class="mt-4">
             <h3>NASA Data:</h3>
-            <p>{{ NASA_data }}<p>
+            <pre>{{ NASA_data }}</pre>
         </div>
         {% endif %}
+
         {% if NASA_data_ET0 %}
         <div class="mt-4">
             <h3>NDVI Data with ET0:</h3>
-            <p>{{ NASA_data_ET0 }}<p>
+            <pre>{{ NASA_data_ET0 }}</pre>
         </div>
-        {% endif %}
-        {% if NDVI_image %}
-        <div class="mt-4">
-            <h3>NDVI Image:</h3>
-            <img src="{{ NDVI_image }}" alt="NDVI Image" class="img-fluid"/>
+        {% endif %} -->
+        <div class="mt-2 alert alert-info">
+            {% if NDVI_image %}
+            <h4>NDVI Image:</h4>
+            <img src="{{ NDVI_image }}" alt="NDVI Image" class="img-fluid rounded shadow-sm"/>
+            {% endif %}
+            {% if WSI_image %}
+            <h4>Water Stress Index (WSI):</h4>
+            <img src="{{ WSI_image }}" alt="WSI Image" class="img-fluid rounded shadow-sm"/>
+            {% endif %}
         </div>
-        {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <script>
+    var map = L.map('map').setView([-34.6, -58.45], 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    var drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+
+    var drawControl = new L.Control.Draw({
+      draw: {
+        polygon: false,
+        polyline: false,
+        circle: false,
+        marker: false,
+        circlemarker: false,
+        rectangle: true
+      },
+      edit: { featureGroup: drawnItems }
+    });
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      drawnItems.clearLayers();
+      var layer = e.layer;
+      drawnItems.addLayer(layer);
+
+      var bounds = layer.getBounds();
+      var ne = bounds.getNorthEast();
+      var sw = bounds.getSouthWest();
+
+      document.getElementById('lat1').value = ne.lat;
+      document.getElementById('lon1').value = sw.lng;
+      document.getElementById('lat2').value = sw.lat;
+      document.getElementById('lon2').value = ne.lng;
+    });
+  </script>
 {% endblock %}

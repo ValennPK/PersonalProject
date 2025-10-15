@@ -112,39 +112,68 @@ def predict_cat_vs_dog():
 @confirmed_required
 def water_stress():
     from app.ai.scripts.water_stress.utilities import (
-    fetch_NASA_data,
-    calc_et0_fao56,
-    fetch_NDVI_ee
+        fetch_NASA_data,
+        calc_et0_fao56,
+        fetch_NDVI_ee_image,
+        calc_water_stress,
+        image_to_url
     )
-    from flask import request
 
     form = WaterStressForm()
     result = None
     NASA_data = None
     NASA_data_ET0 = None
-    NDVI_image = None
-
-    if request.method == 'POST':
-        print("POST recibido:", request.form)
+    ndvi_url = None
+    wsi_url = None
 
     if form.validate_on_submit():
-        latitude = form.latitude.data
-        longitude = form.longitude.data
+        # Coordenadas del rectángulo
+        lat1 = form.lat1.data
+        lon1 = form.lon1.data
+        lat2 = form.lat2.data
+        lon2 = form.lon2.data
+
+        # Fechas en formato YYYYMMDD
         start_date = form.start_date.data.strftime('%Y%m%d')
         end_date = form.end_date.data.strftime('%Y%m%d')
 
-        NASA_data = fetch_NASA_data(latitude, longitude, start_date, end_date)
+        # Obtenemos los datos de la NASA para el centro del rectángulo
+        center_lat = (lat1 + lat2) / 2
+        center_lon = (lon1 + lon2) / 2
+        NASA_data = fetch_NASA_data(center_lat, center_lon, start_date, end_date)
         NASA_data_ET0 = calc_et0_fao56(NASA_data)
-        NDVI_image = fetch_NDVI_ee(latitude, longitude, start_date, end_date)
+
+        # Obtenemos la imagen NDVI y la región
+        ndvi_img, region = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+
+        # Calcular WSI (o ETa/ETc hipotético)
+        # Aquí et0_value puede venir de tus cálculos o asumir un valor de prueba
+        et0_value = sum(NASA_data_ET0.values()) / len(NASA_data_ET0)
+        wsi_img = calc_water_stress(ndvi_img, et0_value, region)
+
+        # Convertir las imágenes a URLs para mostrar en <img>
+        ndvi_url = image_to_url(ndvi_img, region)
+        wsi_url = image_to_url(wsi_img, region)
 
         result = {
-            "latitude": latitude,
-            "longitude": longitude,
+            "lat1": lat1,
+            "lon1": lon1,
+            "lat2": lat2,
+            "lon2": lon2,
             "start_date": start_date,
             "end_date": end_date
         }
 
-    return render_template('ai/water-stress.html', form=form, result=result,NASA_data=NASA_data, NASA_data_ET0=NASA_data_ET0, NDVI_image=NDVI_image)
+    return render_template(
+        'ai/water-stress.html',
+        form=form,
+        result=result,
+        NASA_data=NASA_data,
+        NASA_data_ET0=NASA_data_ET0,
+        NDVI_image=ndvi_url,
+        WSI_image=wsi_url
+    )
+
 
 
 
