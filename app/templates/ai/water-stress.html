@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Water Stress Map{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body">
+        <h2 class="card-title">Water Stress Map</h2>
+        <form method="post" action="{{ url_for('ai.water_stress') }}">
+            {{ form.hidden_tag() }}
+            <div class="mb-3">
+                {{ form.latitude.label(class="form-label") }}
+                {{ form.latitude(class="form-control", placeholder="Latitud") }}
+            </div>
+            <div class="mb-3">
+                {{ form.longitude.label(class="form-label") }}
+                {{ form.longitude(class="form-control", placeholder="Longitud") }}
+            </div>
+            <div class="mb-3">
+                {{ form.start_date.label(class="form-label") }}
+                {{ form.start_date(class="form-control", type="date") }}
+            </div>
+            <div class="mb-3">
+                {{ form.end_date.label(class="form-label") }}
+                {{ form.end_date(class="form-control", type="date") }}
+            </div>
+            <button type="submit" class="btn btn-primary">{{ form.submit.label.text }}</button>
+        </form>
+        {% if result %}
+        <div class="mt-4 alert alert-info">
+            <h3>Resultado:</h3>
+            <p><strong>latitude:</strong> {{ result.latitude }}</p>
+            <p><strong>longitude:</strong> {{ result.longitude }}</p>
+            <p><strong>start_date:</strong> {{ result.start_date }}</p>
+            <p><strong>end_date:</strong> {{ result.end_date }}</p>
+        </div>
+        {% endif %}
+        {% if NASA_data %}
+        <div class="mt-4">
+            <h3>NASA Data:</h3>
+            <p>{{ NASA_data }}<p>
+        </div>
+        {% endif %}
+        {% if NASA_data_ET0 %}
+        <div class="mt-4">
+            <h3>NDVI Data with ET0:</h3>
+            <p>{{ NASA_data_ET0 }}<p>
+        </div>
+        {% endif %}
+        {% if NDVI_image %}
+        <div class="mt-4">
+            <h3>NDVI Image:</h3>
+            <img src="{{ NDVI_image }}" alt="NDVI Image" class="img-fluid"/>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

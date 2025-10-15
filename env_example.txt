@@ -1,0 +1,22 @@
+# Environment variables for your Flask project
+FLASK_APP=x
+FLASK_ENV=x
+SECRET_KEY=x
+
+FLASK_ADMIN = mail_x
+
+TF_ENABLE_ONEDNN_OPTS=x
+
+DATABASE_URL=db_config_x
+FLASK_DEBUG=x
+
+# Mail server configuration
+MAIL_SERVER=smtp.googlemail.com
+MAIL_PORT=587
+MAIL_USE_TLS=true
+MAIL_USERNAME=mail_x
+MAIL_PASSWORD=app_key_x
+MAIL_DEFAULT_SENDER=mail_sender_x
+
+# NDVI and NASA API configuration
+PROJECT_ID=project_name_id

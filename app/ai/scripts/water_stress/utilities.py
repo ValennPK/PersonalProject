@@ -94,63 +94,57 @@ def calc_et0_fao56(data):
 
 def fetch_NDVI_ee(lat, lon, start, end, cloud_thresh=50):
     """
-    Obtiene datos de NDVI desde Google Earth Engine usando la colección Sentinel-2.
-    Parámetros:
-        lat, lon (float): Coordenadas en grados decimales
-        start, end (str): Fechas en formato 'YYYYMMDD'
-        cloud_thresh (int): Umbral de porcentaje de nubes para filtrar imágenes
-    Retorna:
-        dict: Diccionario con fechas y valores medios de NDVI
+    Obtiene una imagen NDVI desde Google Earth Engine (Sentinel-2)
+    y devuelve una URL directa a un PNG (visible en un <img>).
     """
-    
+
     load_dotenv()
+
     try:
         ee.Initialize(project=os.getenv("PROJECT_ID"))
     except Exception:
         ee.Authenticate()
         ee.Initialize(project=os.getenv("PROJECT_ID"))
 
+    # Convertir fechas al formato YYYY-MM-DD
     start_dt = datetime.strptime(start, "%Y%m%d").strftime("%Y-%m-%d")
-    end_dt   = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
+    end_dt = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
 
+    # Región de interés (1 km alrededor del punto)
     point = ee.Geometry.Point([lon, lat])
-    region = point.buffer(1000).bounds()  # Área de 1 km alrededor del punto
+    region = point.buffer(1000).bounds()
 
+    # Cargar colección Sentinel-2
     collection = (
         ee.ImageCollection("COPERNICUS/S2_SR")
         .filterBounds(region)
         .filterDate(start_dt, end_dt)
-        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_thresh)))
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_thresh))
+    )
 
-    # Agregar NDVI
+    # Calcular NDVI
     def add_ndvi(img):
-        ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
+        ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
         return img.addBands(ndvi)
 
     ndvi_collection = collection.map(add_ndvi)
+    ndvi_mean = ndvi_collection.select("NDVI").mean()
 
-    # # Reducir cada imagen a un dict {fecha: NDVI}
-    # def reduce_to_dict(img):
-    #     mean = img.select('NDVI').reduceRegion(
-    #         reducer=ee.Reducer.mean(),
-    #         geometry=point,
-    #         scale=10
-    #     ).get('NDVI')
-    #     date = ee.Date(img.get('system:time_start')).format('YYYYMMdd')
-    #     return ee.Feature(None, {'date': date, 'NDVI': mean})
+    # Parámetros visuales
+    vis_params = {"min": 0, "max": 1, "palette": ["red", "yellow", "green"]}
 
-    # feature_collection = ndvi_collection.map(reduce_to_dict)
+    # Generar una imagen PNG (thumbnail) con getThumbURL
+    thumb_params = {
+        "min": 0,
+        "max": 1,
+        "dimensions": 512,
+        "region": region.getInfo()["coordinates"],
+        "palette": ["red", "yellow", "green"],
+    }
 
-    # # Obtener lista de features como diccionarios
-    # features = feature_collection.getInfo()['features']
-    # ndvi_dict = {f['properties']['date']: f['properties']['NDVI'] for f in features if f['properties']['NDVI'] is not None}
+    ndvi_url = ndvi_mean.getThumbURL(thumb_params)
 
-    # return ndvi_dict
-
-    ndvi_mean = ndvi_collection.select('NDVI').mean()
-
-    return ndvi_mean.clip(region)
-
+    return ndvi_url
 
 
 
