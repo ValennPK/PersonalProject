@@ -155,10 +155,6 @@ def calc_water_stress(ndvi_image, et0_value, region):
     # WSI = (ETc - ETa) / ETc
     wsi = etc.subtract(eta).divide(etc).clamp(0, 1)
 
-    # Opcional: agregar un estilo de visualización para debug
-    # vis_params = {'min':0, 'max':1, 'palette':['green','yellow','red']}
-    # wsi_vis = wsi.visualize(**vis_params)
-
     return wsi
 
 
