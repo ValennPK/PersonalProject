@@ -3,7 +3,7 @@ from ..decorators import confirmed_required
 from PIL import Image
 import joblib
 import numpy as np
-from .forms import LogisticPredictionForm, CatVsDogPredictionForm, WaterStressForm
+from .forms import LogisticPredictionForm, CatVsDogPredictionForm, WaterStressForm, WaterStressPredictForm
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import load_model
 
@@ -72,7 +72,7 @@ def predict_logistic():
             "probability": round(float(probability), 4)
         }
 
-        print(f"Prediction result: {result}")
+        # print(f"Prediction result: {result}")
 
     return render_template('ai/predict-logistic.html', form=form, result= result)
     
@@ -113,7 +113,7 @@ def predict_cat_vs_dog():
 def water_stress():
     from app.ai.scripts.water_stress.utilities import (
         fetch_NASA_data,
-        calc_et0_fao56,
+        calc_et0_fao56_day,
         fetch_NDVI_ee_image,
         calc_water_stress,
         image_to_url
@@ -124,6 +124,7 @@ def water_stress():
     NASA_data = None
     NASA_data_ET0 = None
     ndvi_url = None
+    image_date = None
     wsi_url = None
 
     if form.validate_on_submit():
@@ -134,24 +135,25 @@ def water_stress():
         lon2 = form.lon2.data
 
         # Fechas en formato YYYYMMDD
-        start_date = form.start_date.data.strftime('%Y%m%d')
-        end_date = form.end_date.data.strftime('%Y%m%d')
+        date = form.date.data.strftime('%Y%m%d')
 
         # Obtenemos los datos de la NASA para el centro del rectángulo
         center_lat = (lat1 + lat2) / 2
         center_lon = (lon1 + lon2) / 2
-        NASA_data = fetch_NASA_data(center_lat, center_lon, start_date, end_date)
-        NASA_data_ET0 = calc_et0_fao56(NASA_data)
+        NASA_data = fetch_NASA_data(center_lat, center_lon, date)
+        NASA_data_ET0 = calc_et0_fao56_day(NASA_data, date)
+
+        # print("NASA Data ET0:", NASA_data_ET0)
 
         # Obtenemos la imagen NDVI y la región
-        ndvi_img, region = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+        ndvi_img, region, image_date = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, date)
 
-        # Calcular WSI (o ETa/ETc hipotético)
-        # Aquí et0_value puede venir de tus cálculos o asumir un valor de prueba
-        et0_value = sum(NASA_data_ET0.values()) / len(NASA_data_ET0)
-        wsi_img = calc_water_stress(ndvi_img, et0_value, region)
+        # # Calcular WSI (o ETa/ETc hipotético)
+        # # Aquí et0_value puede venir de tus cálculos o asumir un valor de prueba
+        # et0_value = sum(NASA_data_ET0.values()) / len(NASA_data_ET0)
+        wsi_img = calc_water_stress(ndvi_img, NASA_data_ET0, region)
 
-        # Convertir las imágenes a URLs para mostrar en <img>
+        # # Convertir las imágenes a URLs para mostrar en <img>
         ndvi_url = image_to_url(ndvi_img, region)
         wsi_url = image_to_url(wsi_img, region)
 
@@ -160,8 +162,7 @@ def water_stress():
             "lon1": lon1,
             "lat2": lat2,
             "lon2": lon2,
-            "start_date": start_date,
-            "end_date": end_date
+            "date": date,
         }
 
     return render_template(
@@ -171,9 +172,63 @@ def water_stress():
         NASA_data=NASA_data,
         NASA_data_ET0=NASA_data_ET0,
         NDVI_image=ndvi_url,
+        image_date=image_date,
         WSI_image=wsi_url
     )
 
+@ai.route('/water-stress-predict', methods=['POST', 'GET'])
+@confirmed_required
+def water_stress_predict():
+    from app.ai.scripts.water_stress.utilities import (
+        fetch_forecast_data,
+        fetch_NDVI_ee_image,
+        generate_wsi_timeseries,
+        estimate_etc_series,
+        estimate_eta_series,
+        compute_wsi_series
+    )
+
+    form = WaterStressPredictForm()
+    result = None
+    forecast_data = None
+    wsi_series = None
+
+    if form.validate_on_submit():
+        lat1 = form.lat1.data
+        lon1 = form.lon1.data
+        lat2 = form.lat2.data
+        lon2 = form.lon2.data
+
+        result = {"lat1": lat1, "lon1": lon1, "lat2": lat2, "lon2": lon2}
+
+        # 1️⃣ Obtener pronóstico
+        forecast_data = fetch_forecast_data(lat1, lon1, lat2, lon2)
+        if forecast_data is None:
+            forecast_data = {}
+
+        # 2️⃣ Obtener NDVI promedio del área (puede ser histórico o el más reciente)
+        ndvi_img, region = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start=None, end=None)
+
+        # 3️⃣ Generar WSI diario para los próximos 5 días
+        daily_wsi = generate_wsi_timeseries(ndvi_img, forecast_data, region)
+
+        # 4️⃣ Convertir a series de valores para Chart.js
+        time_series = [d["date"] for d in daily_wsi]
+        et0_series = [d["et0"] for d in daily_wsi]
+        ndvi_mean = 0.6  # puedes calcular el NDVI promedio real si querés
+
+        etc_series = estimate_etc_series(et0_series)
+        eta_series = estimate_eta_series(et0_series, ndvi_mean)
+
+        wsi_series = compute_wsi_series(eta_series, etc_series, time_series)
+
+    return render_template(
+        "ai/water-stress-predict.html",
+        form=form,
+        result=result,
+        forecast_data=forecast_data,
+        wsi_series=wsi_series  # ✅ ahora es JSON serializable
+    )
 
 
 

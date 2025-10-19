@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Water Stress Map Predict{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h2 class="card-title mb-4">Water Stress Map Predict</h2>
+
+    <form method="post" action="{{ url_for('ai.water_stress_predict') }}">
+      {{ form.hidden_tag() }}
+      <div class="mb-3">
+        <label class="form-label fw-bold">Seleccioná un área en el mapa:</label>
+        <div id="map" style="height: 500px; border-radius: 10px;"></div>
+      </div>
+
+      <input type="hidden" name="lat1" id="lat1">
+      <input type="hidden" name="lon1" id="lon1">
+      <input type="hidden" name="lat2" id="lat2">
+      <input type="hidden" name="lon2" id="lon2">
+
+      <button type="submit" class="btn btn-primary w-100 mt-3">
+        {{ form.submit.label.text }}
+      </button>
+    </form>
+  </div>
+</div>
+
+{% if result %}
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <h3 class="card-title mb-3">Datos Ingresados:</h3>
+    <ul class="list-group">
+      <li class="list-group-item"><strong>Lat1:</strong> {{ result.lat1 }}</li>
+      <li class="list-group-item"><strong>Lon1:</strong> {{ result.lon1 }}</li>
+      <li class="list-group-item"><strong>Lat2:</strong> {{ result.lat2 }}</li>
+      <li class="list-group-item"><strong>Lon2:</strong> {{ result.lon2 }}</li>
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+{% if wsi_series %}
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <h3 class="card-title mb-3">Serie Temporal del Índice de Estrés Hídrico (WSI)</h3>
+    <canvas id="wsiChart" width="100%" height="40"></canvas>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+  {% raw %}
+    var map = L.map('map').setView([-34.6, -58.45], 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    var drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+
+    var drawControl = new L.Control.Draw({
+      draw: {
+        polygon: false,
+        polyline: false,
+        circle: false,
+        marker: false,
+        circlemarker: false,
+        rectangle: true
+      },
+      edit: { featureGroup: drawnItems }
+    });
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      drawnItems.clearLayers();
+      var layer = e.layer;
+      drawnItems.addLayer(layer);
+
+      var bounds = layer.getBounds();
+      var ne = bounds.getNorthEast();
+      var sw = bounds.getSouthWest();
+
+      document.getElementById('lat1').value = ne.lat;
+      document.getElementById('lon1').value = sw.lng;
+      document.getElementById('lat2').value = sw.lat;
+      document.getElementById('lon2').value = ne.lng;
+    });
+  {% endraw %}
+
+  {% if wsi_series %}
+  const ctx = document.getElementById('wsiChart');
+  const wsiData = {
+    labels: {{ wsi_series.time | tojson }},
+    datasets: [{
+      label: 'Índice de Estrés Hídrico (WSI)',
+      data: {{ wsi_series.values | tojson }},
+      borderColor: 'rgba(255, 99, 132, 1)',
+      backgroundColor: 'rgba(255, 99, 132, 0.2)',
+      borderWidth: 2,
+      tension: 0.3,
+      fill: true,
+      pointRadius: 4,
+      pointHoverRadius: 6
+    }]
+  };
+
+  new Chart(ctx, {
+    type: 'line',
+    data: wsiData,
+    options: {
+      responsive: true,
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'WSI' } },
+        x: { title: { display: true, text: 'Tiempo' } }
+      }
+    }
+  });
+  {% endif %}
+  </script>
+{% endblock %}

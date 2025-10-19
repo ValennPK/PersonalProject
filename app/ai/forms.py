@@ -21,6 +21,12 @@ class WaterStressForm(FlaskForm):
     lon1 = FloatField('Longitud esquina 1', validators=[DataRequired()])
     lat2 = FloatField('Latitud esquina 2', validators=[DataRequired()])
     lon2 = FloatField('Longitud esquina 2', validators=[DataRequired()])
-    start_date = DateField('Fecha inicio', format='%Y-%m-%d', validators=[DataRequired()])
-    end_date = DateField('Fecha fin', format='%Y-%m-%d', validators=[DataRequired()])
+    date = DateField('Fecha', format='%Y-%m-%d', validators=[DataRequired()])
     submit = SubmitField('Analizar')
+
+class WaterStressPredictForm(FlaskForm):
+    lat1 = FloatField('Latitud', validators=[DataRequired()])
+    lon1 = FloatField('Longitud', validators=[DataRequired()])
+    lat2 = FloatField('Latitud', validators=[DataRequired()])
+    lon2 = FloatField('Longitud', validators=[DataRequired()])
+    submit = SubmitField('Predict')
