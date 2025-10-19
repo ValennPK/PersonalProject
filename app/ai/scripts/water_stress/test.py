@@ -1,7 +1,7 @@
 import ee
 import numpy as np
 import matplotlib.pyplot as plt
-from utilities import fetch_NDVI_ee
+from utilities import fetch_forecast_data
 import requests
 from PIL import Image
 from io import BytesIO
@@ -44,19 +44,25 @@ lon = -64.1833
 start = "20251001"
 end = "20251010"
 
-ndvi_image = fetch_NDVI_ee(lat, lon, start, end)
+data = fetch_forecast_data(lat, lon, lat, lon)
+print("Datos obtenidos del servicio Open-Meteo:")
+print(data)
 
-ndvi_url = ndvi_image.getThumbURL({
-    'min': 0.0,
-    'max': 1.0,
-    'palette': ['green', 'white', 'red'],
-    'dimensions': 512
-})
 
-response = requests.get(ndvi_url)
-img = Image.open(BytesIO(response.content))
 
-plt.imshow(img)
-plt.title("NDVI promedio del período")
-plt.axis('off')
-plt.show()
+# ndvi_image = fetch_NDVI_ee(lat, lon, start, end)
+
+# ndvi_url = ndvi_image.getThumbURL({
+#     'min': 0.0,
+#     'max': 1.0,
+#     'palette': ['green', 'white', 'red'],
+#     'dimensions': 512
+# })
+
+# response = requests.get(ndvi_url)
+# img = Image.open(BytesIO(response.content))
+
+# plt.imshow(img)
+# plt.title("NDVI promedio del período")
+# plt.axis('off')
+# plt.show()

@@ -172,7 +172,45 @@ def image_to_url(image, region, dimensions=512):
     return image.getThumbURL(thumb_params)
 
 
+import requests
 
+def fetch_forecast_data(lat1, lon1, lat2, lon2):
+    """
+    Obtiene pronósticos climáticos diarios (5 días) del servicio Open-Meteo
+    para el punto central del rectángulo definido por (lat1, lon1) y (lat2, lon2).
 
+    Retorna un diccionario con los datos de ET0, temperatura, humedad, etc.
+    """
+    # Calcular el punto central del área
+    lat_c = (lat1 + lat2) / 2
+    lon_c = (lon1 + lon2) / 2
 
+    base_url = "https://api.open-meteo.com/v1/forecast"
+
+    params = {
+        "latitude": lat_c,
+        "longitude": lon_c,
+        "daily": (
+            "temperature_2m_max,temperature_2m_min,"
+            "relative_humidity_2m_mean,et0_fao_evapotranspiration,"
+            "precipitation_sum,wind_speed_10m_max,shortwave_radiation_sum"
+        ),
+        "timezone": "America/Argentina/Cordoba",
+        "forecast_days": 5
+    }
+
+    try:
+        response = requests.get(base_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        # Validar formato esperado
+        if "daily" not in data:
+            raise ValueError("Respuesta inesperada del servicio meteorológico.")
+
+        return data["daily"]
+
+    except Exception as e:
+        print(f"[ERROR] No se pudieron obtener los datos: {e}")
+        return None
 
