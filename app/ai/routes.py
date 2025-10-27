@@ -116,7 +116,8 @@ def water_stress():
         calc_et0_fao56,
         fetch_NDVI_ee_image,
         calc_water_stress,
-        image_to_url
+        image_to_url,
+        fetch_NDVI_stac,
     )
 
     form = WaterStressForm()
@@ -125,6 +126,7 @@ def water_stress():
     NASA_data_ET0 = None
     ndvi_url = None
     wsi_url = None
+    img_date = None
 
     if form.validate_on_submit():
         # Coordenadas del rectángulo
@@ -143,17 +145,28 @@ def water_stress():
         NASA_data = fetch_NASA_data(center_lat, center_lon, start_date, end_date)
         NASA_data_ET0 = calc_et0_fao56(NASA_data)
 
-        # Obtenemos la imagen NDVI y la región
-        ndvi_img, region = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+        # First try STAC-based fetch (Planetary Computer). If it fails, fall back to Earth Engine.
+        try:
+            # Try MODIS 16-day product first (MOD13Q1). The function will fall back if not found.
+            ndvi_url, img_date = fetch_NDVI_stac(lat1, lon1, lat2, lon2, start_date, end_date, collection_name='MOD13Q1')
+            # We won't compute WSI via EE if using STAC path in this simple implementation.
+            wsi_url = None
+        except Exception as e:
+            current_app.logger.warning(f"STAC fetch failed: {e}. Falling back to Earth Engine.")
+            ndvi_img, region, img_date = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+            et0_value = sum(NASA_data_ET0.values()) / len(NASA_data_ET0)
+            wsi_img = calc_water_stress(ndvi_img, et0_value, region)
+            ndvi_url = image_to_url(ndvi_img, region)
+            wsi_url = image_to_url(wsi_img, region)
 
-        # Calcular WSI (o ETa/ETc hipotético)
-        # Aquí et0_value puede venir de tus cálculos o asumir un valor de prueba
-        et0_value = sum(NASA_data_ET0.values()) / len(NASA_data_ET0)
-        wsi_img = calc_water_stress(ndvi_img, et0_value, region)
-
-        # Convertir las imágenes a URLs para mostrar en <img>
-        ndvi_url = image_to_url(ndvi_img, region)
-        wsi_url = image_to_url(wsi_img, region)
+        # Ensure img_date is a plain Python string when possible (EE returns ee.String)
+        if img_date is not None:
+            try:
+                # Earth Engine computed objects expose getInfo()
+                if hasattr(img_date, 'getInfo'):
+                    img_date = img_date.getInfo()
+            except Exception as ee_err:
+                current_app.logger.warning(f"Could not retrieve img_date getInfo(): {ee_err}")
 
         result = {
             "lat1": lat1,
@@ -161,13 +174,14 @@ def water_stress():
             "lat2": lat2,
             "lon2": lon2,
             "start_date": start_date,
-            "end_date": end_date
+            "end_date": end_date,    
         }
 
     return render_template(
         'ai/water-stress.html',
         form=form,
         result=result,
+        img_date=img_date,
         NASA_data=NASA_data,
         NASA_data_ET0=NASA_data_ET0,
         NDVI_image=ndvi_url,

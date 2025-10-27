@@ -123,7 +123,192 @@ def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
     ndvi_collection = collection.map(add_ndvi)
     ndvi_mean = ndvi_collection.select("NDVI").mean()
 
-    return ndvi_mean, region  # devolvemos imagen y región para generar thumbnail luego
+    # Obtener una fecha representativa para la colección (por ejemplo, la fecha media de las imágenes)
+    # Calculamos el promedio de las fechas de adquisición como timestamp medio.
+    def img_time(img):
+        return ee.Image(img).get('system:time_start')
+
+    times = ndvi_collection.aggregate_array('system:time_start')
+    # Si no hay imágenes, devolvemos None para la fecha
+    ndvi_date = None
+    if times.size().getInfo() > 0:
+        # Convertir lista de millis a ee.List de números y tomar el promedio
+        times_list = ee.List(times)
+        mean_time = ee.Number(times_list.reduce(ee.Reducer.mean()))
+        # Formatear la fecha como string 'YYYY-MM-dd'
+        ndvi_date = ee.Date(mean_time).format('YYYY-MM-dd')
+
+    return ndvi_mean, region, ndvi_date  # devolvemos imagen, región y la fecha representativa
+
+
+def fetch_NDVI_stac(lat1, lon1, lat2, lon2, start, end, max_cloud=50, out_dir=None, collection_name='sentinel-2-l2a'):
+    """
+    Descarga una escena Sentinel-2 vía STAC (Planetary Computer), calcula NDVI localmente,
+    guarda un PNG en el filesystem (por defecto en app/static/ai/) y devuelve la URL relativa
+    junto con la fecha de adquisición (YYYY-MM-DD).
+
+    Nota: importa paquetes opcionales (pystac-client, planetary_computer, rasterio, numpy).
+    """
+    # Imports locales para que el resto del módulo no requiera estas librerías
+    from pystac_client import Client
+    import planetary_computer as pc
+    import rasterio
+    import numpy as np
+    from rasterio.enums import Resampling
+    from rasterio.plot import reshape_as_image
+
+    # Prepare bbox (minx, miny, maxx, maxy) and datetime window
+    min_lon = min(lon1, lon2)
+    max_lon = max(lon1, lon2)
+    min_lat = min(lat1, lat2)
+    max_lat = max(lat1, lat2)
+    bbox = [min_lon, min_lat, max_lon, max_lat]
+
+    # Accept start/end in either 'YYYYMMDD' or 'YYYY-MM-DD' (or datetime)
+    def _to_iso(s):
+        if s is None:
+            return None
+        if isinstance(s, datetime):
+            return s.strftime('%Y-%m-%d')
+        if isinstance(s, str):
+            if len(s) == 8 and s.isdigit():
+                return datetime.strptime(s, "%Y%m%d").strftime('%Y-%m-%d')
+            return s
+        return str(s)
+
+    start_iso = _to_iso(start)
+    end_iso = _to_iso(end)
+    datetime_range = f"{start_iso}/{end_iso}"
+
+    # STAC search on Planetary Computer
+    client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
+    # Try search with requested collection first; if that fails (invalid collection id or API error)
+    # fall back to a broader search without collections.
+    items = []
+    tried_collections = []
+    if collection_name:
+        # Try a few common MODIS/STAC collection ids if the provided one yields no results
+        candidate_collections = [
+            collection_name,
+            'modis-061-mod13q1',
+            'MOD13Q1',
+            'MOD13Q1.061',
+            'MODIS/061/MOD13Q1'
+        ]
+        for coll in candidate_collections:
+            if coll in tried_collections:
+                continue
+            tried_collections.append(coll)
+            try:
+                search = client.search(
+                    collections=[coll],
+                    bbox=bbox,
+                    datetime=datetime_range,
+                    query={"eo:cloud_cover": {"lt": max_cloud}},
+                    limit=10,
+                )
+                items = list(search.get_items())
+                if items:
+                    collection_name = coll
+                    break
+            except Exception:
+                # ignore and try next candidate
+                continue
+
+    # If no items found via collection-specific searches, try a generic search
+    if not items:
+        try:
+            search = client.search(
+                bbox=bbox,
+                datetime=datetime_range,
+                query={"eo:cloud_cover": {"lt": max_cloud}},
+                limit=10,
+            )
+            items = list(search.get_items())
+        except Exception as e:
+            raise RuntimeError(f"STAC search failed for collection candidates {tried_collections}: {e}")
+    if not items:
+        raise RuntimeError(f"No items found for bbox/date range (collection={collection_name})")
+
+    # Compute the newest acquisition date among the found items
+    item_dates = [it.datetime for it in items if getattr(it, 'datetime', None) is not None]
+    newest_date = None
+    if item_dates:
+        newest_date_dt = max(item_dates)
+        newest_date = newest_date_dt.strftime('%Y-%m-%d')
+
+    # Choose best item (lowest cloud cover) as a default for actual asset download
+    items_sorted = sorted(items, key=lambda it: (it.properties.get('eo:cloud_cover', 100)))
+    item = items_sorted[0]
+
+    # Detect if the item already contains an NDVI asset (e.g., MOD13Q1)
+    ndvi_asset = item.assets.get('NDVI') or item.assets.get('ndvi')
+    if ndvi_asset is not None:
+        # MODIS-like product: NDVI asset exists and usually needs scaling (e.g., 0.0001)
+        ndvi_href = pc.sign(ndvi_asset.href)
+        with rasterio.Env():
+            with rasterio.open(ndvi_href) as r_ndvi:
+                ndvi_arr = r_ndvi.read(1).astype('float32')
+                meta = r_ndvi.meta.copy()
+        # Apply MODIS scaling if values are integer (heuristic)
+        if meta.get('dtype', '').startswith('int') or ndvi_arr.max() > 1:
+            scale = 0.0001
+            ndvi = ndvi_arr * scale
+        else:
+            ndvi = ndvi_arr
+
+    else:
+        # Sentinel-like product: read red/nir and compute NDVI
+        red_asset = item.assets.get('B04') or item.assets.get('B04.jp2')
+        nir_asset = item.assets.get('B08') or item.assets.get('B08.jp2')
+        if red_asset is None or nir_asset is None:
+            raise RuntimeError('Required assets (B04/B08 or NDVI) not found in item')
+
+        # Sign URLs using planetary_computer
+        red_href = pc.sign(red_asset.href)
+        nir_href = pc.sign(nir_asset.href)
+
+        # Read bands with rasterio (resample to match if needed)
+        with rasterio.Env():
+            with rasterio.open(red_href) as r_red, rasterio.open(nir_href) as r_nir:
+                # Read first band
+                red = r_red.read(1).astype('float32')
+                nir = r_nir.read(1).astype('float32')
+                meta = r_red.meta.copy()
+
+                # If shapes differ, resample nir to red's shape
+                if red.shape != nir.shape:
+                    nir = r_nir.read(1, out_shape=red.shape, resampling=Resampling.bilinear).astype('float32')
+                # Compute NDVI
+                np.seterr(divide='ignore', invalid='ignore')
+                ndvi = (nir - red) / (nir + red)
+                ndvi = np.nan_to_num(ndvi, nan=0.0)
+                ndvi = np.clip(ndvi, -1, 1)
+
+    # Compute NDVI
+    np.seterr(divide='ignore', invalid='ignore')
+    ndvi = (nir - red) / (nir + red)
+    ndvi = np.nan_to_num(ndvi, nan=0.0)
+    ndvi = np.clip(ndvi, -1, 1)
+
+    # Render as RGB-like PNG for quick display (map NDVI -1..1 to 0..255 palette)
+    norm = ((ndvi + 1) / 2.0 * 255).astype('uint8')
+    rgb = np.dstack([norm, norm, norm])
+
+    # Save PNG to static folder
+    if out_dir is None:
+        out_dir = os.path.join(os.getcwd(), 'app', 'static', 'ai')
+    os.makedirs(out_dir, exist_ok=True)
+    filename = f"ndvi_{newest_date if newest_date else 'unknown'}.png"
+    out_path = os.path.join(out_dir, filename)
+
+    # Use rasterio to save PNG with geo metadata removed (simple view)
+    import imageio
+    imageio.imwrite(out_path, rgb)
+
+    # Return relative URL for Flask (static path) and acquisition date
+    rel_url = f"/static/ai/{filename}"
+    return rel_url, newest_date
 
 
 def calc_water_stress(ndvi_image, et0_value, region):
