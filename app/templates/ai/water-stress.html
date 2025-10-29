@@ -12,6 +12,18 @@
 <div class="card shadow-sm">
     <div class="card-body">
         <h2 class="card-title mb-4">Water Stress Map</h2>
+        <h3 class="mb-3">Instrucciones:</h3>
+        <ul>
+            <li>Seleccioná un rango de fechas para el análisis de estrés hídrico.</li>
+            <li>Usá la herramienta de dibujo en el mapa para seleccionar un área rectangular de interés.</li>
+            <li>Hacé clic en "Analizar Estrés Hídrico" para procesar los datos y generar el mapa de estrés hídrico.</li>
+        </ul>
+        <h3 class="mb-3">Consideraciones/Funcionamiento:</h3>
+        <ul>
+            <li>El sistema utilizará la imagen mas reciente del satélite para calcular el Índice de Estrés Hídrico (WSI) basado en el NDVI y la evapotranspiración (ET0).</li>
+            <li>El mapa resultante mostrará las áreas con diferentes niveles de estrés hídrico, ayudando a identificar zonas que requieren atención especial.</li>
+            <li>Es importante seleccionar un área suficientemente grande para obtener resultados precisos.</li>
+        </ul>
 
         <form method="post" action="{{ url_for('ai.water_stress') }}">
             {{ form.hidden_tag() }}

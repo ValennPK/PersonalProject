@@ -4,6 +4,7 @@ from PIL import Image
 import joblib
 import numpy as np
 from .forms import LogisticPredictionForm, CatVsDogPredictionForm, WaterStressForm
+import ee
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import load_model
 
@@ -116,9 +117,10 @@ def water_stress():
         calc_et0_fao56,
         fetch_NDVI_ee_image,
         calc_water_stress,
-        image_to_url,
-        fetch_NDVI_stac,
+        image_to_url
+        # fetch_NDVI_stac
     )
+    from datetime import datetime
 
     form = WaterStressForm()
     result = None
@@ -134,30 +136,44 @@ def water_stress():
         lon1 = form.lon1.data
         lat2 = form.lat2.data
         lon2 = form.lon2.data
-
-        # Fechas en formato YYYYMMDD
         start_date = form.start_date.data.strftime('%Y%m%d')
         end_date = form.end_date.data.strftime('%Y%m%d')
+
+
+        # First try STAC-based fetch (Planetary Computer). If it fails, fall back to Earth Engine.
+        # try:
+            # Try MODIS 16-day product first (MOD13Q1). The function will fall back if not found.
+            # ndvi_url, img_date = fetch_NDVI_stac(lat1, lon1, lat2, lon2, start_date, end_date, collection_name='COPERNICUS/S2_HARMONIZED')
+            # # We won't compute WSI via EE if using STAC path in this simple implementation.
+            # wsi_url = None
+        # except Exception as e:
+            # current_app.logger.warning(f"STAC fetch failed: {e}. Falling back to Earth Engine.")
+        
+        ndvi_img, region, img_date = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+        
+        img_date_str = img_date.getInfo()
+        img_date_dt = datetime.strptime(img_date_str, "%Y-%m-%d")
+        img_date_dt = img_date_dt.strftime("%Y%m%d")
+
+        # print(f"img_date_str: {img_date_str}, img_date_dt: {img_date_dt}")
+
+        # raise Exception("Debug Breakpoint")
 
         # Obtenemos los datos de la NASA para el centro del rectángulo
         center_lat = (lat1 + lat2) / 2
         center_lon = (lon1 + lon2) / 2
-        NASA_data = fetch_NASA_data(center_lat, center_lon, start_date, end_date)
+
+        NASA_data = fetch_NASA_data(center_lat, center_lon, img_date_dt, img_date_dt)
         NASA_data_ET0 = calc_et0_fao56(NASA_data)
 
-        # First try STAC-based fetch (Planetary Computer). If it fails, fall back to Earth Engine.
-        try:
-            # Try MODIS 16-day product first (MOD13Q1). The function will fall back if not found.
-            ndvi_url, img_date = fetch_NDVI_stac(lat1, lon1, lat2, lon2, start_date, end_date, collection_name='MOD13Q1')
-            # We won't compute WSI via EE if using STAC path in this simple implementation.
-            wsi_url = None
-        except Exception as e:
-            current_app.logger.warning(f"STAC fetch failed: {e}. Falling back to Earth Engine.")
-            ndvi_img, region, img_date = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+        if ndvi_img is not None:
             et0_value = sum(NASA_data_ET0.values()) / len(NASA_data_ET0)
             wsi_img = calc_water_stress(ndvi_img, et0_value, region)
             ndvi_url = image_to_url(ndvi_img, region)
             wsi_url = image_to_url(wsi_img, region)
+        else:
+            ndvi_url = None
+            wsi_url = None
 
         # Ensure img_date is a plain Python string when possible (EE returns ee.String)
         if img_date is not None:

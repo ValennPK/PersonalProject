@@ -1,12 +1,9 @@
 import math
 import requests
-import pandas as pd
 import ee
 from datetime import datetime
 from dotenv import load_dotenv
 import os
-
-import requests
 
 def fetch_NASA_data(lat, lon, start, end):
     """
@@ -23,11 +20,7 @@ def fetch_NASA_data(lat, lon, start, end):
         raise ValueError("La latitud debe estar entre -90 y 90 grados.")
     if not (-180 <= lon <= 180):
         raise ValueError("La longitud debe estar entre -180 y 180 grados.")
-    if len(start) != 8 or len(end) != 8 or not (start.isdigit() and end.isdigit()):
-        raise ValueError("Las fechas deben estar en formato 'YYYYMMDD'.")
-    if start > end:
-        raise ValueError("La fecha de inicio debe ser anterior a la fecha de fin.")
-
+    
     base = "https://power.larc.nasa.gov/api/temporal/daily/point"
     params = {
         "parameters": "ALLSKY_SFC_SW_DWN,T2M,T2M_MAX,T2M_MIN,RH2M,PS,WS10M",
@@ -92,11 +85,61 @@ def calc_et0_fao56(data):
 
     return results
 
+# def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
+#     load_dotenv()
+#     try:
+#         ee.Initialize(project=os.getenv("PROJECT_ID"))
+#     except Exception:
+#         ee.Authenticate()
+#         ee.Initialize(project=os.getenv("PROJECT_ID"))
+
+#     start_dt = datetime.strptime(start, "%Y%m%d").strftime("%Y-%m-%d")
+#     end_dt   = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
+
+#     region = ee.Geometry.Rectangle([lon1, lat1, lon2, lat2])
+
+#     collection = (
+#         ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+#         .filterBounds(region)
+#         .filterDate(start_dt, end_dt)
+#         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_thresh))
+#         # ✅ Nuevo filtro: solo imágenes con las bandas necesarias
+#         .filter(ee.Filter.listContains("system:band_names", "B4"))
+#         .filter(ee.Filter.listContains("system:band_names", "B8"))
+#     )
+
+#     def add_ndvi(img):
+#         ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
+#         return img.addBands(ndvi)
+
+#     ndvi_collection = collection.map(add_ndvi)
+
+#     # Si la colección quedó vacía después del filtrado, lanzamos una advertencia
+#     size = ndvi_collection.size().getInfo()
+#     if size == 0:
+#         raise ValueError("No hay imágenes con bandas B8 y B4 disponibles para el rango de fechas seleccionado.")
+
+#     ndvi_mean = ndvi_collection.select("NDVI").mean()
+
+#     # Calcular la fecha media
+#     times = ndvi_collection.aggregate_array('system:time_start')
+#     ndvi_date = None
+#     if times.size().getInfo() > 0:
+#         times_list = ee.List(times)
+#         mean_time = ee.Number(times_list.reduce(ee.Reducer.mean()))
+#         ndvi_date = ee.Date(mean_time).format('YYYY-MM-dd')
+
+#     return ndvi_mean, region, ndvi_date
+
 def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
     """
-    Devuelve un objeto ee.Image con el NDVI promedio
-    de un rectángulo definido por dos puntos.
+    Busca la imagen NDVI más reciente disponible desde end_date hacia atrás,
+    dentro del rango definido por start_date.
     """
+    from datetime import datetime, timedelta
+    import ee, os
+    from dotenv import load_dotenv
+
     load_dotenv()
     try:
         ee.Initialize(project=os.getenv("PROJECT_ID"))
@@ -104,211 +147,201 @@ def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
         ee.Authenticate()
         ee.Initialize(project=os.getenv("PROJECT_ID"))
 
-    start_dt = datetime.strptime(start, "%Y%m%d").strftime("%Y-%m-%d")
-    end_dt   = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
+    # Convertir fechas a formato datetime y luego a string ISO
+    start_dt = datetime.strptime(start, "%Y%m%d")
+    end_dt = datetime.strptime(end, "%Y%m%d")
 
     region = ee.Geometry.Rectangle([lon1, lat1, lon2, lat2])
 
-    collection = (
-        ee.ImageCollection("COPERNICUS/S2_SR")
-        .filterBounds(region)
-        .filterDate(start_dt, end_dt)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_thresh))
-    )
-
-    def add_ndvi(img):
-        ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
-        return img.addBands(ndvi)
-
-    ndvi_collection = collection.map(add_ndvi)
-    ndvi_mean = ndvi_collection.select("NDVI").mean()
-
-    # Obtener una fecha representativa para la colección (por ejemplo, la fecha media de las imágenes)
-    # Calculamos el promedio de las fechas de adquisición como timestamp medio.
-    def img_time(img):
-        return ee.Image(img).get('system:time_start')
-
-    times = ndvi_collection.aggregate_array('system:time_start')
-    # Si no hay imágenes, devolvemos None para la fecha
+    ndvi_mean = None
     ndvi_date = None
-    if times.size().getInfo() > 0:
-        # Convertir lista de millis a ee.List de números y tomar el promedio
-        times_list = ee.List(times)
-        mean_time = ee.Number(times_list.reduce(ee.Reducer.mean()))
-        # Formatear la fecha como string 'YYYY-MM-dd'
-        ndvi_date = ee.Date(mean_time).format('YYYY-MM-dd')
 
-    return ndvi_mean, region, ndvi_date  # devolvemos imagen, región y la fecha representativa
+    # 🔁 Buscar desde la fecha más reciente hacia atrás hasta el inicio
+    days_back = (end_dt - start_dt).days
+    for delta in range(days_back + 1):
+        day_end = end_dt - timedelta(days=delta)
+        day_start = day_end - timedelta(days=1)
+
+        # Convertir a string en formato YYYY-MM-DD
+        start_str = day_start.strftime("%Y-%m-%d")
+        end_str = day_end.strftime("%Y-%m-%d")
+
+        # Buscar imágenes Sentinel-2 disponibles en ese día
+        collection = (
+            ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+            .filterBounds(region)
+            .filterDate(start_str, end_str)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_thresh))
+            .filter(ee.Filter.listContains("system:band_names", "B4"))
+            .filter(ee.Filter.listContains("system:band_names", "B8"))
+        )
+
+        size = collection.size().getInfo()
+
+        if size > 0:
+            # Encontramos una colección con imágenes disponibles
+            def add_ndvi(img):
+                ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
+                return img.addBands(ndvi)
+
+            ndvi_collection = collection.map(add_ndvi)
+            ndvi_mean = ndvi_collection.select("NDVI").mean()
+
+            # Calcular la fecha media
+            times = ndvi_collection.aggregate_array('system:time_start')
+            if times.size().getInfo() > 0:
+                times_list = ee.List(times)
+                mean_time = ee.Number(times_list.reduce(ee.Reducer.mean()))
+                ndvi_date = ee.Date(mean_time).format('YYYY-MM-dd')
+            break  # ✅ salimos del bucle: ya tenemos la imagen más reciente
+
+    # Si no se encontró ninguna imagen, lanzar error
+    if ndvi_mean is None:
+        raise ValueError(f"No hay imágenes disponibles entre {start} y {end} en la región seleccionada.")
+
+    return ndvi_mean, region, ndvi_date
 
 
-def fetch_NDVI_stac(lat1, lon1, lat2, lon2, start, end, max_cloud=50, out_dir=None, collection_name='sentinel-2-l2a'):
-    """
-    Descarga una escena Sentinel-2 vía STAC (Planetary Computer), calcula NDVI localmente,
-    guarda un PNG en el filesystem (por defecto en app/static/ai/) y devuelve la URL relativa
-    junto con la fecha de adquisición (YYYY-MM-DD).
 
-    Nota: importa paquetes opcionales (pystac-client, planetary_computer, rasterio, numpy).
-    """
-    # Imports locales para que el resto del módulo no requiera estas librerías
-    from pystac_client import Client
-    import planetary_computer as pc
-    import rasterio
-    import numpy as np
-    from rasterio.enums import Resampling
-    from rasterio.plot import reshape_as_image
 
-    # Prepare bbox (minx, miny, maxx, maxy) and datetime window
-    min_lon = min(lon1, lon2)
-    max_lon = max(lon1, lon2)
-    min_lat = min(lat1, lat2)
-    max_lat = max(lat1, lat2)
-    bbox = [min_lon, min_lat, max_lon, max_lat]
+# def fetch_NDVI_stac(
+#     lat1, lon1, lat2, lon2,
+#     start, end,
+#     max_cloud=50,
+#     out_dir=None,
+#     collection_name='sentinel-2-l2a'
+# ):
+#     """
+#     Descarga una escena satelital vía STAC (Planetary Computer o Sentinel Harmonized),
+#     calcula NDVI localmente, guarda un PNG en /static/ai/ y devuelve la URL relativa
+#     junto con la fecha de adquisición (YYYY-MM-DD).
 
-    # Accept start/end in either 'YYYYMMDD' or 'YYYY-MM-DD' (or datetime)
-    def _to_iso(s):
-        if s is None:
-            return None
-        if isinstance(s, datetime):
-            return s.strftime('%Y-%m-%d')
-        if isinstance(s, str):
-            if len(s) == 8 and s.isdigit():
-                return datetime.strptime(s, "%Y%m%d").strftime('%Y-%m-%d')
-            return s
-        return str(s)
+#     Compatible con:
+#         - sentinel-2-l2a (Planetary Computer)
+#         - COPERNICUS/S2_HARMONIZED (Earth Engine STAC proxy)
+#         - MOD13Q1 / modis-061-mod13q1 (MODIS NDVI)
 
-    start_iso = _to_iso(start)
-    end_iso = _to_iso(end)
-    datetime_range = f"{start_iso}/{end_iso}"
+#     Requiere: pystac-client, planetary_computer, rasterio, numpy, imageio
+#     """
+#     from pystac_client import Client
+#     import planetary_computer as pc
+#     import rasterio
+#     import numpy as np
+#     from rasterio.enums import Resampling
+#     import imageio
+#     from datetime import datetime
 
-    # STAC search on Planetary Computer
-    client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
-    # Try search with requested collection first; if that fails (invalid collection id or API error)
-    # fall back to a broader search without collections.
-    items = []
-    tried_collections = []
-    if collection_name:
-        # Try a few common MODIS/STAC collection ids if the provided one yields no results
-        candidate_collections = [
-            collection_name,
-            'modis-061-mod13q1',
-            'MOD13Q1',
-            'MOD13Q1.061',
-            'MODIS/061/MOD13Q1'
-        ]
-        for coll in candidate_collections:
-            if coll in tried_collections:
-                continue
-            tried_collections.append(coll)
-            try:
-                search = client.search(
-                    collections=[coll],
-                    bbox=bbox,
-                    datetime=datetime_range,
-                    query={"eo:cloud_cover": {"lt": max_cloud}},
-                    limit=10,
-                )
-                items = list(search.get_items())
-                if items:
-                    collection_name = coll
-                    break
-            except Exception:
-                # ignore and try next candidate
-                continue
+#     # --- Preparar bbox (minx, miny, maxx, maxy)
+#     bbox = [min(lon1, lon2), min(lat1, lat2), max(lon1, lon2), max(lat1, lat2)]
 
-    # If no items found via collection-specific searches, try a generic search
-    if not items:
-        try:
-            search = client.search(
-                bbox=bbox,
-                datetime=datetime_range,
-                query={"eo:cloud_cover": {"lt": max_cloud}},
-                limit=10,
-            )
-            items = list(search.get_items())
-        except Exception as e:
-            raise RuntimeError(f"STAC search failed for collection candidates {tried_collections}: {e}")
-    if not items:
-        raise RuntimeError(f"No items found for bbox/date range (collection={collection_name})")
+#     # --- Función auxiliar: convierte fecha a formato ISO
+#     def _to_iso(s):
+#         if s is None:
+#             return None
+#         if isinstance(s, datetime):
+#             return s.strftime('%Y-%m-%d')
+#         if isinstance(s, str):
+#             if len(s) == 8 and s.isdigit():
+#                 return datetime.strptime(s, "%Y%m%d").strftime('%Y-%m-%d')
+#             return s
+#         return str(s)
 
-    # Compute the newest acquisition date among the found items
-    item_dates = [it.datetime for it in items if getattr(it, 'datetime', None) is not None]
-    newest_date = None
-    if item_dates:
-        newest_date_dt = max(item_dates)
-        newest_date = newest_date_dt.strftime('%Y-%m-%d')
+#     start_iso = _to_iso(start)
+#     end_iso = _to_iso(end)
+#     datetime_range = f"{start_iso}/{end_iso}"
 
-    # Choose best item (lowest cloud cover) as a default for actual asset download
-    items_sorted = sorted(items, key=lambda it: (it.properties.get('eo:cloud_cover', 100)))
-    item = items_sorted[0]
+#     # --- Inicializar cliente STAC de Planetary Computer
+#     client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
 
-    # Detect if the item already contains an NDVI asset (e.g., MOD13Q1)
-    ndvi_asset = item.assets.get('NDVI') or item.assets.get('ndvi')
-    if ndvi_asset is not None:
-        # MODIS-like product: NDVI asset exists and usually needs scaling (e.g., 0.0001)
-        ndvi_href = pc.sign(ndvi_asset.href)
-        with rasterio.Env():
-            with rasterio.open(ndvi_href) as r_ndvi:
-                ndvi_arr = r_ndvi.read(1).astype('float32')
-                meta = r_ndvi.meta.copy()
-        # Apply MODIS scaling if values are integer (heuristic)
-        if meta.get('dtype', '').startswith('int') or ndvi_arr.max() > 1:
-            scale = 0.0001
-            ndvi = ndvi_arr * scale
-        else:
-            ndvi = ndvi_arr
+#     # --- Colecciones candidatas en orden de prioridad
+#     candidate_collections = [
+#         collection_name,
+#         'COPERNICUS/S2_HARMONIZED'
+#         # 'sentinel-2-l2a',
+#         # 'modis-061-mod13q1',
+#         # 'MOD13Q1',
+#         # 'MOD13Q1.061',
+#         # 'MODIS/061/MOD13Q1'
+#     ]
 
-    else:
-        # Sentinel-like product: read red/nir and compute NDVI
-        red_asset = item.assets.get('B04') or item.assets.get('B04.jp2')
-        nir_asset = item.assets.get('B08') or item.assets.get('B08.jp2')
-        if red_asset is None or nir_asset is None:
-            raise RuntimeError('Required assets (B04/B08 or NDVI) not found in item')
+#     items = []
+#     tried = []
 
-        # Sign URLs using planetary_computer
-        red_href = pc.sign(red_asset.href)
-        nir_href = pc.sign(nir_asset.href)
+#     for coll in candidate_collections:
+#         if coll in tried:
+#             continue
+#         tried.append(coll)
+#         try:
+#             search = client.search(
+#                 collections=[coll],
+#                 bbox=bbox,
+#                 datetime=datetime_range,
+#                 query={"eo:cloud_cover": {"lt": max_cloud}},
+#                 limit=10,
+#             )
+#             items = list(search.get_items())
+#             if items:
+#                 collection_name = coll
+#                 break
+#         except Exception:
+#             continue
 
-        # Read bands with rasterio (resample to match if needed)
-        with rasterio.Env():
-            with rasterio.open(red_href) as r_red, rasterio.open(nir_href) as r_nir:
-                # Read first band
-                red = r_red.read(1).astype('float32')
-                nir = r_nir.read(1).astype('float32')
-                meta = r_red.meta.copy()
+#     if not items:
+#         raise RuntimeError(f"No items found for bbox/date range (collections tried: {tried})")
 
-                # If shapes differ, resample nir to red's shape
-                if red.shape != nir.shape:
-                    nir = r_nir.read(1, out_shape=red.shape, resampling=Resampling.bilinear).astype('float32')
-                # Compute NDVI
-                np.seterr(divide='ignore', invalid='ignore')
-                ndvi = (nir - red) / (nir + red)
-                ndvi = np.nan_to_num(ndvi, nan=0.0)
-                ndvi = np.clip(ndvi, -1, 1)
+#     # --- Obtener la fecha más reciente y el item con menor nubosidad
+#     item_dates = [it.datetime for it in items if getattr(it, 'datetime', None) is not None]
+#     newest_date = max(item_dates).strftime('%Y-%m-%d') if item_dates else None
+#     item = sorted(items, key=lambda it: it.properties.get('eo:cloud_cover', 100))[0]
 
-    # Compute NDVI
-    np.seterr(divide='ignore', invalid='ignore')
-    ndvi = (nir - red) / (nir + red)
-    ndvi = np.nan_to_num(ndvi, nan=0.0)
-    ndvi = np.clip(ndvi, -1, 1)
+#     # --- Buscar asset NDVI (si ya está calculado, como en MODIS)
+#     ndvi_asset = item.assets.get('NDVI') or item.assets.get('ndvi')
+#     if ndvi_asset is not None:
+#         ndvi_href = pc.sign(ndvi_asset.href)
+#         with rasterio.Env(), rasterio.open(ndvi_href) as r_ndvi:
+#             ndvi = r_ndvi.read(1).astype('float32')
+#             meta = r_ndvi.meta.copy()
+#         if meta.get('dtype', '').startswith('int') or ndvi.max() > 1:
+#             ndvi *= 0.0001  # Escalado MODIS típico
+#         ndvi = np.clip(ndvi, -1, 1)
+#     else:
+#         # --- Leer bandas Sentinel (B04 y B08)
+#         red_asset = item.assets.get('B04') or item.assets.get('B04.jp2')
+#         nir_asset = item.assets.get('B08') or item.assets.get('B08.jp2')
 
-    # Render as RGB-like PNG for quick display (map NDVI -1..1 to 0..255 palette)
-    norm = ((ndvi + 1) / 2.0 * 255).astype('uint8')
-    rgb = np.dstack([norm, norm, norm])
+#         if not red_asset or not nir_asset:
+#             raise RuntimeError(f"Required assets (B04/B08) not found in item for {collection_name}")
 
-    # Save PNG to static folder
-    if out_dir is None:
-        out_dir = os.path.join(os.getcwd(), 'app', 'static', 'ai')
-    os.makedirs(out_dir, exist_ok=True)
-    filename = f"ndvi_{newest_date if newest_date else 'unknown'}.png"
-    out_path = os.path.join(out_dir, filename)
+#         red_href = pc.sign(red_asset.href)
+#         nir_href = pc.sign(nir_asset.href)
 
-    # Use rasterio to save PNG with geo metadata removed (simple view)
-    import imageio
-    imageio.imwrite(out_path, rgb)
+#         with rasterio.Env(), rasterio.open(red_href) as r_red, rasterio.open(nir_href) as r_nir:
+#             red = r_red.read(1).astype('float32')
+#             nir = r_nir.read(1).astype('float32')
 
-    # Return relative URL for Flask (static path) and acquisition date
-    rel_url = f"/static/ai/{filename}"
-    return rel_url, newest_date
+#             if red.shape != nir.shape:
+#                 nir = r_nir.read(1, out_shape=red.shape, resampling=Resampling.bilinear)
+
+#             np.seterr(divide='ignore', invalid='ignore')
+#             ndvi = (nir - red) / (nir + red)
+#             ndvi = np.nan_to_num(ndvi, nan=0.0)
+#             ndvi = np.clip(ndvi, -1, 1)
+
+#     # --- Normalizar NDVI para visualización (escala 0–255)
+#     norm = ((ndvi + 1) / 2.0 * 255).astype('uint8')
+#     rgb = np.dstack([norm] * 3)
+
+#     # --- Guardar PNG en carpeta estática
+#     if out_dir is None:
+#         out_dir = os.path.join(os.getcwd(), 'app', 'static', 'ai')
+#     os.makedirs(out_dir, exist_ok=True)
+#     filename = f"ndvi_{collection_name.replace('/', '_')}_{newest_date or 'unknown'}.png"
+#     out_path = os.path.join(out_dir, filename)
+#     imageio.imwrite(out_path, rgb)
+
+#     rel_url = f"/static/ai/{filename}"
+#     return rel_url, newest_date
+
 
 
 def calc_water_stress(ndvi_image, et0_value, region):
