@@ -10,8 +10,6 @@ from tensorflow.keras.models import load_model
 
 ai = Blueprint('ai', __name__)
 
-# UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
-
 @ai.route('/status', methods=['GET'])
 @confirmed_required
 def status():
@@ -138,8 +136,22 @@ def water_stress():
         start_date = form.start_date.data.strftime('%Y%m%d')
         end_date = form.end_date.data.strftime('%Y%m%d')
         
-        ndvi_img, region, img_date = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+        ndvi_result = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+
+        if not ndvi_result["success"]:
+            return render_template(
+                'ai/water-stress.html',
+                form=form,
+                result={"error": ndvi_result["error"]},
+                img_date=img_date,
+                NASA_data=NASA_data,
+                NASA_data_ET0=NASA_data_ET0,
+                NDVI_image=ndvi_url,
+                WSI_image=wsi_url
+            )
         
+        ndvi_img, region, img_date = ndvi_result["data"]
+
         img_date_str = img_date.getInfo()
         img_date_dt = datetime.strptime(img_date_str, "%Y-%m-%d")
         img_date_dt = img_date_dt.strftime("%Y%m%d")

@@ -148,13 +148,12 @@ def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
                 times_list = ee.List(times)
                 mean_time = ee.Number(times_list.reduce(ee.Reducer.mean()))
                 ndvi_date = ee.Date(mean_time).format('YYYY-MM-dd')
-            break  # ✅ salimos del bucle: ya tenemos la imagen más reciente
+            break  
 
-    # Si no se encontró ninguna imagen, lanzar error
     if ndvi_mean is None:
-        raise ValueError(f"No hay imágenes disponibles entre {start} y {end} en la región seleccionada.")
+        return {"success": False, "error": f"No available images between {start} and {end} in the selected region."}
 
-    return ndvi_mean, region, ndvi_date
+    return {"success": True, "data": (ndvi_mean, region, ndvi_date)}
 
 
 def calc_water_stress(ndvi_image, et0_value, region):
