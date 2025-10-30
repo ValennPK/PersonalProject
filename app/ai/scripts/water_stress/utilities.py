@@ -85,51 +85,6 @@ def calc_et0_fao56(data):
 
     return results
 
-# def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
-#     load_dotenv()
-#     try:
-#         ee.Initialize(project=os.getenv("PROJECT_ID"))
-#     except Exception:
-#         ee.Authenticate()
-#         ee.Initialize(project=os.getenv("PROJECT_ID"))
-
-#     start_dt = datetime.strptime(start, "%Y%m%d").strftime("%Y-%m-%d")
-#     end_dt   = datetime.strptime(end, "%Y%m%d").strftime("%Y-%m-%d")
-
-#     region = ee.Geometry.Rectangle([lon1, lat1, lon2, lat2])
-
-#     collection = (
-#         ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
-#         .filterBounds(region)
-#         .filterDate(start_dt, end_dt)
-#         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_thresh))
-#         # ✅ Nuevo filtro: solo imágenes con las bandas necesarias
-#         .filter(ee.Filter.listContains("system:band_names", "B4"))
-#         .filter(ee.Filter.listContains("system:band_names", "B8"))
-#     )
-
-#     def add_ndvi(img):
-#         ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
-#         return img.addBands(ndvi)
-
-#     ndvi_collection = collection.map(add_ndvi)
-
-#     # Si la colección quedó vacía después del filtrado, lanzamos una advertencia
-#     size = ndvi_collection.size().getInfo()
-#     if size == 0:
-#         raise ValueError("No hay imágenes con bandas B8 y B4 disponibles para el rango de fechas seleccionado.")
-
-#     ndvi_mean = ndvi_collection.select("NDVI").mean()
-
-#     # Calcular la fecha media
-#     times = ndvi_collection.aggregate_array('system:time_start')
-#     ndvi_date = None
-#     if times.size().getInfo() > 0:
-#         times_list = ee.List(times)
-#         mean_time = ee.Number(times_list.reduce(ee.Reducer.mean()))
-#         ndvi_date = ee.Date(mean_time).format('YYYY-MM-dd')
-
-#     return ndvi_mean, region, ndvi_date
 
 def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
     """
@@ -200,6 +155,52 @@ def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
         raise ValueError(f"No hay imágenes disponibles entre {start} y {end} en la región seleccionada.")
 
     return ndvi_mean, region, ndvi_date
+
+
+def calc_water_stress(ndvi_image, et0_value, region):
+    """
+    Calcula el Water Stress Index (WSI) a partir de una imagen NDVI y un valor diario de ET0.
+    
+    Parámetros:
+        ndvi_image: ee.Image con NDVI (0-1)
+        et0_value: float o ee.Number (evapotranspiración de referencia diaria)
+        region: ee.Geometry (región de interés)
+
+    Retorna:
+        ee.Image: WSI (0 = sin estrés, 1 = estrés máximo)
+    """
+    # Recortar la imagen a la región
+    ndvi = ndvi_image.clip(region)
+
+    # Coeficiente de cultivo aproximado a partir de NDVI
+    kc = ndvi.multiply(1.25).subtract(0.2).clamp(0.1, 1.2)  # evitar kc = 0
+
+    # Evapotranspiración del cultivo
+    etc = kc.multiply(et0_value)
+
+    # Fracción de agua real transpirada basada en NDVI
+    # Se normaliza NDVI a [0.1, 1] para que siempre haya algo de ETa
+    frac = ndvi.clamp(0.1, 1)
+    eta = etc.multiply(frac)
+
+    # WSI = (ETc - ETa) / ETc
+    wsi = etc.subtract(eta).divide(etc).clamp(0, 1)
+
+    return wsi
+
+
+def image_to_url(image, region, dimensions=512):
+    """
+    Convierte un ee.Image NDVI en una URL PNG para mostrar en un <img>.
+    """
+    thumb_params = {
+        "min": 0,
+        "max": 1,
+        "dimensions": dimensions,
+        "region": region.getInfo()["coordinates"],
+        "palette": ["red", "yellow", "green"],
+    }
+    return image.getThumbURL(thumb_params)
 
 
 
@@ -341,56 +342,4 @@ def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
 
 #     rel_url = f"/static/ai/{filename}"
 #     return rel_url, newest_date
-
-
-
-def calc_water_stress(ndvi_image, et0_value, region):
-    """
-    Calcula el Water Stress Index (WSI) a partir de una imagen NDVI y un valor diario de ET0.
-    
-    Parámetros:
-        ndvi_image: ee.Image con NDVI (0-1)
-        et0_value: float o ee.Number (evapotranspiración de referencia diaria)
-        region: ee.Geometry (región de interés)
-
-    Retorna:
-        ee.Image: WSI (0 = sin estrés, 1 = estrés máximo)
-    """
-    # Recortar la imagen a la región
-    ndvi = ndvi_image.clip(region)
-
-    # Coeficiente de cultivo aproximado a partir de NDVI
-    kc = ndvi.multiply(1.25).subtract(0.2).clamp(0.1, 1.2)  # evitar kc = 0
-
-    # Evapotranspiración del cultivo
-    etc = kc.multiply(et0_value)
-
-    # Fracción de agua real transpirada basada en NDVI
-    # Se normaliza NDVI a [0.1, 1] para que siempre haya algo de ETa
-    frac = ndvi.clamp(0.1, 1)
-    eta = etc.multiply(frac)
-
-    # WSI = (ETc - ETa) / ETc
-    wsi = etc.subtract(eta).divide(etc).clamp(0, 1)
-
-    return wsi
-
-
-def image_to_url(image, region, dimensions=512):
-    """
-    Convierte un ee.Image NDVI en una URL PNG para mostrar en un <img>.
-    """
-    thumb_params = {
-        "min": 0,
-        "max": 1,
-        "dimensions": dimensions,
-        "region": region.getInfo()["coordinates"],
-        "palette": ["red", "yellow", "green"],
-    }
-    return image.getThumbURL(thumb_params)
-
-
-
-
-
 

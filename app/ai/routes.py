@@ -118,7 +118,6 @@ def water_stress():
         fetch_NDVI_ee_image,
         calc_water_stress,
         image_to_url
-        # fetch_NDVI_stac
     )
     from datetime import datetime
 
@@ -138,16 +137,6 @@ def water_stress():
         lon2 = form.lon2.data
         start_date = form.start_date.data.strftime('%Y%m%d')
         end_date = form.end_date.data.strftime('%Y%m%d')
-
-
-        # First try STAC-based fetch (Planetary Computer). If it fails, fall back to Earth Engine.
-        # try:
-            # Try MODIS 16-day product first (MOD13Q1). The function will fall back if not found.
-            # ndvi_url, img_date = fetch_NDVI_stac(lat1, lon1, lat2, lon2, start_date, end_date, collection_name='COPERNICUS/S2_HARMONIZED')
-            # # We won't compute WSI via EE if using STAC path in this simple implementation.
-            # wsi_url = None
-        # except Exception as e:
-            # current_app.logger.warning(f"STAC fetch failed: {e}. Falling back to Earth Engine.")
         
         ndvi_img, region, img_date = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
         
@@ -155,11 +144,6 @@ def water_stress():
         img_date_dt = datetime.strptime(img_date_str, "%Y-%m-%d")
         img_date_dt = img_date_dt.strftime("%Y%m%d")
 
-        # print(f"img_date_str: {img_date_str}, img_date_dt: {img_date_dt}")
-
-        # raise Exception("Debug Breakpoint")
-
-        # Obtenemos los datos de la NASA para el centro del rectángulo
         center_lat = (lat1 + lat2) / 2
         center_lon = (lon1 + lon2) / 2
 
@@ -175,10 +159,8 @@ def water_stress():
             ndvi_url = None
             wsi_url = None
 
-        # Ensure img_date is a plain Python string when possible (EE returns ee.String)
         if img_date is not None:
             try:
-                # Earth Engine computed objects expose getInfo()
                 if hasattr(img_date, 'getInfo'):
                     img_date = img_date.getInfo()
             except Exception as ee_err:
