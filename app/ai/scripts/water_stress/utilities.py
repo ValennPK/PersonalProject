@@ -86,7 +86,7 @@ def calc_et0_fao56(data):
     return results
 
 
-def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=50):
+def fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end, cloud_thresh=30):
     """
     Busca la imagen NDVI más reciente disponible desde end_date hacia atrás,
     dentro del rango definido por start_date.
@@ -201,6 +201,16 @@ def image_to_url(image, region, dimensions=512):
     }
     return image.getThumbURL(thumb_params)
 
+def calc_water_stress_scalar(ndvi_mean, et0_value):
+    """
+    Calcula WSI a partir de NDVI promedio (float) y ET0 (float)
+    """
+    kc = max(0.1, min(1.2, 1.25*ndvi_mean - 0.2))
+    etc = kc * et0_value
+    frac = max(0.1, ndvi_mean)
+    eta = etc * frac
+    wsi = max(0, min(1, (etc - eta)/etc))
+    return wsi
 
 
 
