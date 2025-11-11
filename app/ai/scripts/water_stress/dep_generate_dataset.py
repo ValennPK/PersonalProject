@@ -1,10 +1,16 @@
-import ee
 import os
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
+import csv
+from datetime import datetime
+import ee
 import requests
+import numpy as np
+from tqdm import tqdm
+from dotenv import load_dotenv
+from app.ai.scripts.water_stress.utilities import image_to_url, fetch_NDVI_ee_image
+import matplotlib.pyplot as plt
+import geemap
 
-# --- Inicialización de Earth Engine ---
+
 load_dotenv()
 try:
     ee.Initialize(project=os.getenv("PROJECT_ID"))
@@ -12,150 +18,260 @@ except Exception:
     ee.Authenticate()
     ee.Initialize(project=os.getenv("PROJECT_ID"))
 
-# --- FUNCIONES AUXILIARES ---
-def mask_clouds_SCL(image):
-    """Máscara de nubes más flexible usando la banda SCL."""
-    scl = image.select('SCL')
-    # Mantiene píxeles que no son agua (6), nubes densas (9,10) ni sombras (3)
-    mask = scl.neq(3).And(scl.neq(9)).And(scl.neq(10))
-    return image.updateMask(mask)
+# --- Configuración de lotes ---
+LOCALES = [
+    {
+        "id": "lote_1",
+        "lat1": -32.80,
+        "lon1": -62.30,
+        "lat2": -32.75,
+        "lon2": -62.25
+    },
+    {
+        "id": "lote_2",
+        "lat1": -31.50,
+        "lon1": -62.80,
+        "lat2": -31.45,
+        "lon2": -62.75
+    },
+    {
+        "id": "lote_3",
+        "lat1": -32.00,
+        "lon1": -63.20,
+        "lat2": -31.95,
+        "lon2": -63.15
+    },
+    # --- Nuevos lotes ---
+    {
+        "id": "lote_4",
+        "lat1": -33.00,
+        "lon1": -61.00,
+        "lat2": -32.95,
+        "lon2": -60.95
+    },  # Región sur de Santa Fe
+    {
+        "id": "lote_5",
+        "lat1": -30.80,
+        "lon1": -64.10,
+        "lat2": -30.75,
+        "lon2": -64.05
+    },  # Centro de Córdoba
+    {
+        "id": "lote_6",
+        "lat1": -35.00,
+        "lon1": -63.50,
+        "lat2": -34.95,
+        "lon2": -63.45
+    }  # Norte de La Pampa
+]
 
-def add_ndvi(image):
-    """Calcula NDVI y lo agrega como banda."""
-    ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
-    return image.addBands(ndvi)
 
-def count_valid_pixels(image, region):
-    """Cuenta cuántos píxeles válidos hay en la banda NDVI."""
-    stats = image.select('NDVI').mask().reduceRegion(
-        reducer=ee.Reducer.sum(),
-        geometry=region,
-        scale=10,
-        maxPixels=1e9
+GRID_STEP = 0.005  # tamaño del paso en grados (~1 km)
+START_DATE = '2025-10-01'
+END_DATE = '2025-11-01'
+OUTPUT_PATH = 'app/ai/datasets/water_stress/dataset_wsi.csv'
+
+
+def get_ndvi_grid(lat1, lon1, lat2, lon2, start_date, end_date, grid_step=0.01):
+    """
+    Obtiene valores de NDVI sobre una grilla de puntos dentro de una región rectangular.
+    Retorna una lista de tuplas (lat, lon, ndvi).
+    """
+
+    # Crear el rectángulo
+    region = ee.Geometry.Rectangle([lon1, lat1, lon2, lat2])
+
+    # Cargar la colección MODIS NDVI
+    dataset = (
+        ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+        .filterBounds(region)
+        .filterDate(start_date, end_date)
+        .filter(ee.Filter.listContains("system:band_names", "B4"))
+        .filter(ee.Filter.listContains("system:band_names", "B8"))
     )
-    return ee.Number(stats.get('NDVI'))
 
-# --- PARÁMETROS ---
-start_date = '2023-11-01'
-end_date   = '2024-03-01'
-window_days = 3  # ventana temporal de 3 días
-
-lon1, lat1, lon2, lat2 = -63.20, -32.00, -63.10, -31.92
-region = ee.Geometry.Rectangle([lon1, lat1, lon2, lat2])
-
-output_dir = "app/ai/datasets/water_stress"
-os.makedirs(output_dir, exist_ok=True)
-
-# --- COLECCIÓN BASE ---
-collection_raw = (
-    ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-    .filterBounds(region)
-    .filterDate(start_date, end_date)
-    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 70))
-    .map(mask_clouds_SCL)
-    .map(add_ndvi)
-)
-
-print("Imágenes brutas después del filtro:", collection_raw.size().getInfo())
-
-# --- GENERACIÓN DE COMPOSITES TEMPORALES ---
-start = datetime.strptime(start_date, "%Y-%m-%d")
-end   = datetime.strptime(end_date, "%Y-%m-%d")
-
-current = start
-composite_count = 0
-
-while current < end:
-    next_date = current + timedelta(days=window_days)
+    def add_ndvi(img):
+        ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
+        return img.addBands(ndvi)
     
-    # Filtrar por rango temporal
-    subset = collection_raw.filterDate(current.strftime("%Y-%m-%d"), next_date.strftime("%Y-%m-%d"))
-    
-    if subset.size().getInfo() == 0:
-        current = next_date
-        continue
-    
-    # Crear composite NDVI (mediana)
-    composite = subset.median().clip(region).select('NDVI')
-    
-    # Verificar píxeles válidos
-    valid_pixels = count_valid_pixels(composite, region).getInfo()
-    total_pixels = region.area().getInfo() / (10 * 10)  # píxeles aprox. (10 m resolución)
-    valid_ratio = (valid_pixels / total_pixels) if valid_pixels else 0
+    dataset = dataset.map(add_ndvi)
 
-    if valid_ratio < 0.1:  # menos de 10 % válidos
-        print(f"⏭️  {current.strftime('%Y-%m-%d')} - Omitido (solo {valid_ratio*100:.1f}% válidos)")
-    else:
-        date_str = current.strftime("%Y%m%d")
-        file_name = f"NDVI_{date_str}.tif"
-        file_path = os.path.join(output_dir, file_name)
+    # Promedio temporal de todo el período
+    ndvi_image = dataset.mean()
 
-        print(f"⬇️  Exportando {file_name} ({valid_ratio*100:.1f}% válidos)...")
+    # Crear las listas de coordenadas para el grid
+    lats = np.arange(min(lat1, lat2), max(lat1, lat2), grid_step)
+    lons = np.arange(min(lon1, lon2), max(lon1, lon2), grid_step)
 
-        try:
-            # Generar URL y descargar
-            url = composite.getDownloadURL({
-                'scale': 10,
-                'region': region,
-                'crs': 'EPSG:4326',
-                'format': 'GEO_TIFF'
-            })
-            response = requests.get(url)
-            with open(file_path, 'wb') as f:
-                f.write(response.content)
-            
-            print(f"✅ Guardado en {file_path}")
-            composite_count += 1
-        except Exception as e:
-            print(f"❌ Error exportando {file_name}: {e}")
+    results = []
 
-    current = next_date
+    # Iterar sobre la grilla de puntos
+    for lat in lats:
+        for lon in lons:
+            point = ee.Geometry.Point([lon, lat])
+            ndvi_value = ndvi_image.select("NDVI").reduceRegion(
+                reducer=ee.Reducer.first(),
+                geometry=point,
+                scale=30
+            ).get("NDVI")
+            try:
+                value = ndvi_value.getInfo()
+                if value is not None:
+                    results.append((lat, lon, value))
+            except Exception:
+                continue
 
-print(f"\nProceso completado. {composite_count} composites NDVI exportados correctamente.")
+    return results, ndvi_image
+
+def show_ndvi_map(results):
+    """
+    Muestra dos mapas NDVI:
+    1. Interpolado a partir de los puntos muestreados (results)
+    2. NDVI promedio real de la imagen satelital (ndvi_image)
+    """
+    if not results:
+        print("No hay datos NDVI para mostrar.")
+        return
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import geemap
+    import ee
+
+    # --- 1. Convertir puntos muestreados a grilla ---
+    sample_points = results[0]  # lista de tuplas (lat, lon, ndvi)
+
+    lats = np.array([r[0] for r in sample_points])
+    lons = np.array([r[1] for r in sample_points])
+    ndvi_vals = np.array([r[2] for r in sample_points])
+
+    grid_lat = np.unique(lats)
+    grid_lon = np.unique(lons)
+    ndvi_grid = np.zeros((len(grid_lat), len(grid_lon)))
+
+    for (lat, lon, val) in sample_points:
+        i = np.where(grid_lat == lat)[0][0]
+        j = np.where(grid_lon == lon)[0][0]
+        ndvi_grid[i, j] = val
 
 
-# LOCALES = [
-#     {
-#         "id": "lote_1",
-#         "lat1": -32.80,
-#         "lon1": -62.30,
-#         "lat2": -32.75,
-#         "lon2": -62.25
-#     },
-#     {
-#         "id": "lote_2",
-#         "lat1": -31.50,
-#         "lon1": -62.80,
-#         "lat2": -31.45,
-#         "lon2": -62.75
-#     },
-#     {
-#         "id": "lote_3",
-#         "lat1": -32.00,
-#         "lon1": -63.20,
-#         "lat2": -31.95,
-#         "lon2": -63.15
-#     },
-#     # --- Nuevos lotes ---
-#     {
-#         "id": "lote_4",
-#         "lat1": -33.00,
-#         "lon1": -61.00,
-#         "lat2": -32.95,
-#         "lon2": -60.95
-#     },  # Región sur de Santa Fe
-#     {
-#         "id": "lote_5",
-#         "lat1": -30.80,
-#         "lon1": -64.10,
-#         "lat2": -30.75,
-#         "lon2": -64.05
-#     },  # Centro de Córdoba
-#     {
-#         "id": "lote_6",
-#         "lat1": -35.00,
-#         "lon1": -63.50,
-#         "lat2": -34.95,
-#         "lon2": -63.45
-#     }  # Norte de La Pampa
-# ]
+    # --- 3. Mostrar ambos mapas lado a lado ---
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Mapa interpolado
+    im1 = axes[0].imshow(
+        ndvi_grid,
+        cmap="RdYlGn",
+        origin="lower",
+        extent=[min(grid_lon), max(grid_lon), min(grid_lat), max(grid_lat)]
+    )
+    axes[0].set_title("NDVI interpolado (muestreo)")
+    axes[0].set_xlabel("Longitud")
+    axes[0].set_ylabel("Latitud")
+    fig.colorbar(im1, ax=axes[0], label="NDVI")
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+# --- Función: obtener ET₀ y precipitación de Open-Meteo ---
+def get_meteo(lat, lon, date):
+    url = (
+        f"https://archive-api.open-meteo.com/v1/era5?"
+        f"latitude={lat}&longitude={lon}&start_date={date}&end_date={date}"
+        f"&daily=et0_fao_evapotranspiration,precipitation_sum"
+        f"&timezone=America/Argentina/Buenos_Aires"
+    )
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None, None
+    data = r.json()
+    try:
+        et0 = data['daily']['et0_fao_evapotranspiration'][0]
+        precip = data['daily']['precipitation_sum'][0]
+        return et0, precip
+    except (KeyError, IndexError):
+        return None, None
+
+
+# --- Generar dataset completo ---
+def build_dataset():
+    for lote in LOCALES:
+        lote_id = lote["id"]
+        lat1 = lote["lat1"]
+        lon1 = lote["lon1"]
+        lat2 = lote["lat2"]
+        lon2 = lote["lon2"]
+
+        ndvi_points = get_ndvi_grid(lat1, lon1, lat2, lon2, START_DATE, END_DATE, GRID_STEP)
+
+        print(f"Lote {lote_id}: obtenido {len(ndvi_points[0])} puntos NDVI.")
+
+        # start_date = datetime.strptime(START_DATE, "%Y-%m-%d")
+        # start_date = start_date.strftime("%Y%m%d")
+        # end_date = datetime.strptime(END_DATE, "%Y-%m-%d")
+        # end_date = end_date.strftime("%Y%m%d")
+
+        # ndvi_result = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start_date, end_date)
+
+        # if not ndvi_result["success"]:
+        #     print(f"Error fetching NDVI image for {lote_id}: {ndvi_result['error']}")
+        #     continue
+        # else:
+        #     ndvi_img, region, img_date = ndvi_result["data"]
+        #     ndvi_url = image_to_url(ndvi_img, region)
+        #     print(f"NDVI image URL for {lote_id}: {ndvi_url}")
+
+        # print("Ejemplo de results:", ndvi_points[:5])
+
+        show_ndvi_map(ndvi_points)
+        
+
+#     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+
+#     with open(OUTPUT_PATH, 'w', newline='') as csvfile:
+#         fieldnames = ['lote_id', 'lat', 'lon', 'date', 'ndvi', 'et0', 'precip', 'wsi']
+#         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+#         writer.writeheader()
+
+#         print("Generando dataset con cálculo de WSI...\n")
+
+#         for lote in LOCALES:
+#             lote_id = lote["id"]
+#             lats = np.arange(min(lote["lat1"], lote["lat2"]), max(lote["lat1"], lote["lat2"]), GRID_STEP)
+#             lons = np.arange(min(lote["lon1"], lote["lon2"]), max(lote["lon1"], lote["lon2"]), GRID_STEP)
+#             # print (f"grilla: {len(grid)} puntos para {lote_id}")
+#             print (f"grilla: {len(lats)*len(lons)} puntos para {lote_id}")
+
+#             for lat in lats:
+#                 for lon in lons:
+#                     try:
+#                         ndvi = get_ndvi(lat, lon, START_DATE, END_DATE)
+#                         et0, precip = get_meteo(lat, lon, END_DATE)
+#                         if ndvi is None or et0 is None:
+#                             continue
+
+#                         # --- Calcular WSI ---
+#                         wsi = calc_water_stress_scalar(ndvi, et0)
+
+#                         writer.writerow({
+#                             'lote_id': lote_id,
+#                             'lat': lat,
+#                             'lon': lon,
+#                             'date': END_DATE,
+#                             'ndvi': ndvi,
+#                             'et0': et0,
+#                             'precip': precip,
+#                             'wsi': wsi
+#                         })
+
+#                         print (f"Guardado: Lote {lote_id}, Punto ({lat},{lon}), NDVI: {ndvi}, ET0: {et0}, Precip: {precip}, WSI: {wsi}")
+#                     except Exception as e:
+#                         print(f"Error en punto ({lat},{lon}): {e}")
+#                         continue
+
+
+if __name__ == '__main__':
+    build_dataset()
