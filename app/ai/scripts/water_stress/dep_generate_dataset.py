@@ -112,3 +112,50 @@ while current < end:
     current = next_date
 
 print(f"\nProceso completado. {composite_count} composites NDVI exportados correctamente.")
+
+
+# LOCALES = [
+#     {
+#         "id": "lote_1",
+#         "lat1": -32.80,
+#         "lon1": -62.30,
+#         "lat2": -32.75,
+#         "lon2": -62.25
+#     },
+#     {
+#         "id": "lote_2",
+#         "lat1": -31.50,
+#         "lon1": -62.80,
+#         "lat2": -31.45,
+#         "lon2": -62.75
+#     },
+#     {
+#         "id": "lote_3",
+#         "lat1": -32.00,
+#         "lon1": -63.20,
+#         "lat2": -31.95,
+#         "lon2": -63.15
+#     },
+#     # --- Nuevos lotes ---
+#     {
+#         "id": "lote_4",
+#         "lat1": -33.00,
+#         "lon1": -61.00,
+#         "lat2": -32.95,
+#         "lon2": -60.95
+#     },  # Región sur de Santa Fe
+#     {
+#         "id": "lote_5",
+#         "lat1": -30.80,
+#         "lon1": -64.10,
+#         "lat2": -30.75,
+#         "lon2": -64.05
+#     },  # Centro de Córdoba
+#     {
+#         "id": "lote_6",
+#         "lat1": -35.00,
+#         "lon1": -63.50,
+#         "lat2": -34.95,
+#         "lon2": -63.45
+#     }  # Norte de La Pampa
+# ]
