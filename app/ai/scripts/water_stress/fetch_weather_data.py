@@ -95,3 +95,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# "precipitacion_mm",
+# "temp_mean_c",
+# "temp_max_c",
+# "temp_min_c",
+# "radiacion_sw_mj_m2",
+# "vel_viento_m_s",
+# "humedad_relativa_pct",
+# "et0_mm",
