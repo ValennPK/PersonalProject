@@ -54,7 +54,7 @@ def get_weather_value(weather_data, date, key):
 with open(OUTPUT_CSV, "w", newline="") as csvfile:
     fieldnames = [
         "split", "lote", "fecha", "interpolada",
-        "lat", "lon", "ndvi",
+        "lat", "lon", "ndvi", "ndvi_t_1",
         "precip_t", "precip_t_1", "precip_t_2", "precip_t_3", "precip_t_4", "precip_t_5",
         "temp_t", "temp_t_1", "temp_t_2", "temp_t_3", "temp_t_4", "temp_t_5",
         "hum_t", "hum_t_1", "hum_t_2", "hum_t_3", "hum_t_4", "hum_t_5",
@@ -79,10 +79,16 @@ with open(OUTPUT_CSV, "w", newline="") as csvfile:
 
             weather_data = load_data(lote)
 
-            for filename in os.listdir(lote_path):
-                if not filename.endswith(".tif"):
-                    continue
+            # 🔹 Guardar NDVI previos por coordenada
+            ndvi_prev = {}
 
+            # Procesar archivos ordenados por fecha
+            tif_files = sorted(
+                [f for f in os.listdir(lote_path) if f.endswith(".tif")],
+                key=lambda n: datetime.strptime(DATE_PATTERN.search(n).group(1), "%Y%m%d")
+            )
+
+            for filename in tif_files:
                 match = DATE_PATTERN.search(filename)
                 if not match:
                     print(f"⚠️ No se encontró fecha en {filename}")
@@ -92,7 +98,7 @@ with open(OUTPUT_CSV, "w", newline="") as csvfile:
                 interpolada = int("_interp" in filename)
                 file_path = os.path.join(lote_path, filename)
 
-                # --- Obtener variables climáticas para los últimos 6 días ---
+                # --- Obtener variables climáticas ---
                 def seq(var):
                     return [get_weather_value(weather_data, date_obj - timedelta(days=i), var) for i in range(6)]
 
@@ -116,6 +122,13 @@ with open(OUTPUT_CSV, "w", newline="") as csvfile:
                                 continue
                             lon, lat = transform * (x, y)
 
+                            # 🔸 Obtener NDVI del día anterior si existe
+                            prev_key = (round(lat, 5), round(lon, 5))
+                            ndvi_t_1 = ndvi_prev.get(prev_key, np.nan)
+
+                            # Guardar NDVI actual para uso futuro
+                            ndvi_prev[prev_key] = val
+
                             writer.writerow({
                                 "split": split,
                                 "lote": lote,
@@ -124,6 +137,7 @@ with open(OUTPUT_CSV, "w", newline="") as csvfile:
                                 "lat": lat,
                                 "lon": lon,
                                 "ndvi": val,
+                                "ndvi_t_1": ndvi_t_1 if not np.isnan(ndvi_t_1) else "",
                                 **{f"precip_t_{i if i > 0 else ''}".rstrip('_'): precip_vals[i] for i in range(6)},
                                 **{f"temp_t_{i if i > 0 else ''}".rstrip('_'): temp_vals[i] for i in range(6)},
                                 **{f"hum_t_{i if i > 0 else ''}".rstrip('_'): hum_vals[i] for i in range(6)},
