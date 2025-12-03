@@ -16,7 +16,7 @@ from tensorflow.keras import layers, models, callbacks
 
 # --- CONFIGURACIÓN ---
 DATASET_PATH = "app/ai/datasets/water_stress/ndvi_dataset.csv"
-MODEL_PATH = "app/ai/models/ndvi_predictor.h5"
+MODEL_PATH = "app/ai/models/ndvi_predictor2.h5"
 
 # --- 1. CARGA DE DATOS ---
 print("📂 Cargando dataset...")

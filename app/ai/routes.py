@@ -3,7 +3,7 @@ from ..decorators import confirmed_required
 from PIL import Image
 import joblib
 import numpy as np
-from .forms import LogisticPredictionForm, CatVsDogPredictionForm, WaterStressForm
+from .forms import LogisticPredictionForm, CatVsDogPredictionForm, WaterStressForm, WaterStressPredictForm
 import ee
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import load_model
@@ -197,6 +197,101 @@ def water_stress():
         NDVI_image=ndvi_url,
         WSI_image=wsi_url
     )
+
+@ai.route('/water-stress/predict', methods=['POST', 'GET'])
+@confirmed_required
+def water_stress_predict():
+    from app.ai.scripts.water_stress.utilities import (
+        fetch_NDVI_ee_image,
+        fetch_data,
+        image_to_url
+    )
+    from datetime import datetime, timedelta
+    from flask import flash, url_for, redirect
+    import os
+
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(BASE_DIR, "models", "ndvi_predictor_gru2.h5")
+
+    model = load_model(model_path, compile=False)
+
+
+    form = WaterStressPredictForm()
+
+    if form.validate_on_submit():
+        lat1 = form.lat1.data
+        lon1 = form.lon1.data
+        lat2 = form.lat2.data
+        lon2 = form.lon2.data
+
+        start = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
+        end = datetime.now(). strftime("%Y%m%d")
+
+        # Obtener última imagen NDVI
+        res = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end)
+
+        if not res["success"]:
+            flash("No se encontraron imágenes NDVI.", "danger")
+            return redirect(url_for("ai.water_stress_predict"))
+
+        ndvi_img, region, ndvi_date = res["data"]
+
+        # Extraer píxeles NDVI
+        pixels = ndvi_img.sampleRectangle(region=region, defaultValue=0)
+        array = np.array(pixels.get("NDVI").getInfo())
+        height, width = array.shape
+        flat_pixels = array.flatten().tolist()
+
+        # Ajustar fechas
+        ndvi_date = ndvi_date.getInfo()
+        ndvi_date_dt = datetime.strptime(ndvi_date, "%Y-%m-%d")
+        prev_date_dt = ndvi_date_dt - timedelta(days=30)
+
+        start_str = prev_date_dt.strftime("%Y-%m-%d")
+        end_str = ndvi_date_dt.strftime("%Y-%m-%d")
+
+        # Obtener ventana climática de 30 días
+        weather_df = fetch_data(lat1, lon1, start_str, end_str)
+
+        if len(weather_df) < 30:
+            flash("No hay suficientes datos climáticos.", "danger")
+            return redirect(url_for("ai.water_stress_predict"))
+
+        # Tomar EXACTAMENTE últimos 30 días
+        weather_seq = weather_df.tail(30).values  # (30, features)
+        weather_seq = weather_seq.reshape(1, 30, weather_seq.shape[1])  # (1, 30, features)
+
+        # Entrada estática
+        delta_days = 30  # porque siempre tomaste 30 días
+        static_input = np.array([[lat1, lon1, delta_days]])  # (1, 3)
+
+        # Predicción por pixel
+        results = []
+        for px in flat_pixels:
+            pred = model.predict([weather_seq, static_input])[0][0]
+            results.append(pred)
+
+
+        # --- Reconstruir imagen predicha ---
+        pred_np = np.array(results).reshape((height, width))
+
+        pred_image = ee.Image(pred_np.tolist()) \
+                       .rename("NDVI_PRED") \
+                       .reproject(ndvi_img.projection()) \
+                       .clip(region)
+
+        # Convertir a URL
+        predicted_url = image_to_url(pred_image, region)
+
+        # Renderizado del template
+        return render_template(
+            "water_stress_predict.html",
+            ndvi_date=ndvi_date.getInfo(),
+            predicted_url=predicted_url
+        )
+
+    return render_template("ai/water-stress-predict.html", form=form)
 
 
 

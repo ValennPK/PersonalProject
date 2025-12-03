@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Predicción NDVI{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm">
+    <div class="card-body">
+        <h2 class="card-title mb-4">Predicción de NDVI</h2>
+
+        <h4 class="mb-3">Instrucciones:</h4>
+        <ul>
+            <li>Seleccioná un área rectangular en el mapa.</li>
+            <li>El sistema buscará automáticamente la imagen NDVI más reciente.</li>
+            <li>Luego utilizará datos climáticos + la red neuronal para predecir el NDVI futuro pixel a pixel.</li>
+        </ul>
+
+        <form method="post" action="{{ url_for('ai.water_stress_predict') }}">
+            {{ form.hidden_tag() }}
+
+            <!-- Inputs ocultos -->
+            <input type="hidden" name="lat1" id="lat1">
+            <input type="hidden" name="lon1" id="lon1">
+            <input type="hidden" name="lat2" id="lat2">
+            <input type="hidden" name="lon2" id="lon2">
+
+            <!-- Campo last_date se ignora en servidor -->
+            <input type="hidden" name="last_date" id="last_date" value="2000-01-01">
+
+            <div class="mb-3">
+                <label class="form-label fw-bold">Seleccioná un área en el mapa:</label>
+                <div id="map" style="height: 450px; border-radius: 10px;"></div>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 mt-3">
+                {{ form.submit.label.text }}
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+    <div class="card-body">
+
+        {% if img_date %}
+        <div class="alert alert-info">
+            <h5 class="mb-1">Imagen NDVI utilizada:</h5>
+            <p class="mb-2"><strong>Fecha:</strong> {{ img_date }}</p>
+        </div>
+        {% endif %}
+
+        {% if NDVI_image %}
+        <div class="mt-3">
+            <h4>NDVI más reciente</h4>
+            <img src="{{ NDVI_image }}" alt="NDVI Image" class="img-fluid rounded shadow-sm"/>
+        </div>
+        {% endif %}
+
+        {% if predictions %}
+        <div class="mt-4">
+            <h4>Predicciones de NDVI ({{ predictions|length }} píxeles)</h4>
+            <pre class="bg-light rounded p-3" style="max-height: 300px; overflow-y: scroll;">
+                {{ predictions|tojson(indent=2) }}
+            </pre>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <script>
+    var map = L.map('map').setView([-34.6, -58.45], 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    var drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+
+    var drawControl = new L.Control.Draw({
+      draw: {
+        polygon: false,
+        polyline: false,
+        circle: false,
+        marker: false,
+        circlemarker: false,
+        rectangle: true
+      },
+      edit: { featureGroup: drawnItems }
+    });
+
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      drawnItems.clearLayers();
+      var layer = e.layer;
+      drawnItems.addLayer(layer);
+
+      var bounds = layer.getBounds();
+      var ne = bounds.getNorthEast();
+      var sw = bounds.getSouthWest();
+
+      document.getElementById('lat1').value = ne.lat;
+      document.getElementById('lon1').value = sw.lng;
+      document.getElementById('lat2').value = sw.lat;
+      document.getElementById('lon2').value = ne.lng;
+    });
+  </script>
+{% endblock %}

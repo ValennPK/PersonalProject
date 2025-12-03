@@ -212,143 +212,98 @@ def calc_water_stress_scalar(ndvi_mean, et0_value):
     wsi = max(0, min(1, (etc - eta)/etc))
     return wsi
 
+def ndvi_image_to_pixels(image, region, scale=10):
+    import ee
+    
+    # Reducir la imagen a una lista de píxeles
+    sampled = image.sample(
+        region=region,
+        scale=scale,
+        geometries=True  # necesario para obtener lat/lon
+    ).getInfo()
 
+    pixels = []
+    for f in sampled['features']:
+        ndvi = f['properties']['NDVI']
+        coords = f['geometry']['coordinates']  # lon, lat
+        pixels.append({
+            "lat": coords[1],
+            "lon": coords[0],
+            "ndvi": ndvi
+        })
 
-# def fetch_NDVI_stac(
-#     lat1, lon1, lat2, lon2,
-#     start, end,
-#     max_cloud=50,
-#     out_dir=None,
-#     collection_name='sentinel-2-l2a'
-# ):
-#     """
-#     Descarga una escena satelital vía STAC (Planetary Computer o Sentinel Harmonized),
-#     calcula NDVI localmente, guarda un PNG en /static/ai/ y devuelve la URL relativa
-#     junto con la fecha de adquisición (YYYY-MM-DD).
+    return pixels
 
-#     Compatible con:
-#         - sentinel-2-l2a (Planetary Computer)
-#         - COPERNICUS/S2_HARMONIZED (Earth Engine STAC proxy)
-#         - MOD13Q1 / modis-061-mod13q1 (MODIS NDVI)
+def build_features_for_pixel(ndvi_prev, clima_df):
+    features = {}
 
-#     Requiere: pystac-client, planetary_computer, rasterio, numpy, imageio
-#     """
-#     from pystac_client import Client
-#     import planetary_computer as pc
-#     import rasterio
-#     import numpy as np
-#     from rasterio.enums import Resampling
-#     import imageio
-#     from datetime import datetime
+    # NDVI del día anterior
+    features["ndvi_t_1"] = ndvi_prev
 
-#     # --- Preparar bbox (minx, miny, maxx, maxy)
-#     bbox = [min(lon1, lon2), min(lat1, lat2), max(lon1, lon2), max(lat1, lat2)]
+    # Variables climáticas
+    for var_base, col in [
+        ("precip", "precipitacion_mm"),
+        ("temp",   "temp_mean_c"),
+        ("hum",    "humedad_relativa_pct"),
+        ("et0",    "et0_mm"),
+        ("rad",    "radiacion_sw_mj_m2"),
+        ("viento", "vel_viento_m_s")
+    ]:
+        last_6_days = clima_df[col].tail(6).values[::-1]  # t0..t5
 
-#     # --- Función auxiliar: convierte fecha a formato ISO
-#     def _to_iso(s):
-#         if s is None:
-#             return None
-#         if isinstance(s, datetime):
-#             return s.strftime('%Y-%m-%d')
-#         if isinstance(s, str):
-#             if len(s) == 8 and s.isdigit():
-#                 return datetime.strptime(s, "%Y%m%d").strftime('%Y-%m-%d')
-#             return s
-#         return str(s)
+        for i in range(6):
+            key = f"{var_base}_t_{i if i>0 else ''}".rstrip("_")
+            features[key] = last_6_days[i]
 
-#     start_iso = _to_iso(start)
-#     end_iso = _to_iso(end)
-#     datetime_range = f"{start_iso}/{end_iso}"
+    return features
 
-#     # --- Inicializar cliente STAC de Planetary Computer
-#     client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
+def fetch_data(lat, lon, start_date, end_date, daily_vars=None, timezone=None):
+    """Descarga datos de precipitación diaria desde Open-Meteo"""
+    import requests
+    import pandas as pd
 
-#     # --- Colecciones candidatas en orden de prioridad
-#     candidate_collections = [
-#         collection_name,
-#         'COPERNICUS/S2_HARMONIZED'
-#         # 'sentinel-2-l2a',
-#         # 'modis-061-mod13q1',
-#         # 'MOD13Q1',
-#         # 'MOD13Q1.061',
-#         # 'MODIS/061/MOD13Q1'
-#     ]
+    if daily_vars is None:
+        daily_vars = [
+            "precipitation_sum",
+            "temperature_2m_mean",
+            "temperature_2m_max",
+            "temperature_2m_min",
+            "shortwave_radiation_sum",
+            "windspeed_10m_mean",
+            "relative_humidity_2m_mean",
+            "et0_fao_evapotranspiration"
+        ]   
 
-#     items = []
-#     tried = []
+    if timezone is None:
+        timezone = "America/Argentina/Buenos_Aires"
+    
+    daily_params = ",".join(daily_vars)
 
-#     for coll in candidate_collections:
-#         if coll in tried:
-#             continue
-#         tried.append(coll)
-#         try:
-#             search = client.search(
-#                 collections=[coll],
-#                 bbox=bbox,
-#                 datetime=datetime_range,
-#                 query={"eo:cloud_cover": {"lt": max_cloud}},
-#                 limit=10,
-#             )
-#             items = list(search.get_items())
-#             if items:
-#                 collection_name = coll
-#                 break
-#         except Exception:
-#             continue
+    url = (
+        "https://archive-api.open-meteo.com/v1/archive"
+        f"?latitude={lat}&longitude={lon}"
+        f"&start_date={start_date}&end_date={end_date}"
+        f"&daily={daily_params}"
+        f"&timezone={timezone}"
+    )
 
-#     if not items:
-#         raise RuntimeError(f"No items found for bbox/date range (collections tried: {tried})")
+    r = requests.get(url)
+    r.raise_for_status()
+    data = r.json()
 
-#     # --- Obtener la fecha más reciente y el item con menor nubosidad
-#     item_dates = [it.datetime for it in items if getattr(it, 'datetime', None) is not None]
-#     newest_date = max(item_dates).strftime('%Y-%m-%d') if item_dates else None
-#     item = sorted(items, key=lambda it: it.properties.get('eo:cloud_cover', 100))[0]
+    if "daily" not in data or "precipitation_sum" not in data["daily"]:
+        print("⚠️ No se encontraron datos meteorológicos.")
+        return None
 
-#     # --- Buscar asset NDVI (si ya está calculado, como en MODIS)
-#     ndvi_asset = item.assets.get('NDVI') or item.assets.get('ndvi')
-#     if ndvi_asset is not None:
-#         ndvi_href = pc.sign(ndvi_asset.href)
-#         with rasterio.Env(), rasterio.open(ndvi_href) as r_ndvi:
-#             ndvi = r_ndvi.read(1).astype('float32')
-#             meta = r_ndvi.meta.copy()
-#         if meta.get('dtype', '').startswith('int') or ndvi.max() > 1:
-#             ndvi *= 0.0001  # Escalado MODIS típico
-#         ndvi = np.clip(ndvi, -1, 1)
-#     else:
-#         # --- Leer bandas Sentinel (B04 y B08)
-#         red_asset = item.assets.get('B04') or item.assets.get('B04.jp2')
-#         nir_asset = item.assets.get('B08') or item.assets.get('B08.jp2')
-
-#         if not red_asset or not nir_asset:
-#             raise RuntimeError(f"Required assets (B04/B08) not found in item for {collection_name}")
-
-#         red_href = pc.sign(red_asset.href)
-#         nir_href = pc.sign(nir_asset.href)
-
-#         with rasterio.Env(), rasterio.open(red_href) as r_red, rasterio.open(nir_href) as r_nir:
-#             red = r_red.read(1).astype('float32')
-#             nir = r_nir.read(1).astype('float32')
-
-#             if red.shape != nir.shape:
-#                 nir = r_nir.read(1, out_shape=red.shape, resampling=Resampling.bilinear)
-
-#             np.seterr(divide='ignore', invalid='ignore')
-#             ndvi = (nir - red) / (nir + red)
-#             ndvi = np.nan_to_num(ndvi, nan=0.0)
-#             ndvi = np.clip(ndvi, -1, 1)
-
-#     # --- Normalizar NDVI para visualización (escala 0–255)
-#     norm = ((ndvi + 1) / 2.0 * 255).astype('uint8')
-#     rgb = np.dstack([norm] * 3)
-
-#     # --- Guardar PNG en carpeta estática
-#     if out_dir is None:
-#         out_dir = os.path.join(os.getcwd(), 'app', 'static', 'ai')
-#     os.makedirs(out_dir, exist_ok=True)
-#     filename = f"ndvi_{collection_name.replace('/', '_')}_{newest_date or 'unknown'}.png"
-#     out_path = os.path.join(out_dir, filename)
-#     imageio.imwrite(out_path, rgb)
-
-#     rel_url = f"/static/ai/{filename}"
-#     return rel_url, newest_date
-
+    df = pd.DataFrame({
+        "fecha": pd.to_datetime(data["daily"]["time"]),
+        "precipitacion_mm": data["daily"]["precipitation_sum"],
+        "temp_mean_c": data["daily"]["temperature_2m_mean"],
+        "temp_max_c": data["daily"]["temperature_2m_max"],
+        "temp_min_c": data["daily"]["temperature_2m_min"],
+        "radiacion_sw_mj_m2": data["daily"]["shortwave_radiation_sum"],
+        "vel_viento_m_s": data["daily"]["windspeed_10m_mean"],
+        "humedad_relativa_pct": data["daily"]["relative_humidity_2m_mean"],
+        "et0_mm": data["daily"]["et0_fao_evapotranspiration"],
+    })
+    return df

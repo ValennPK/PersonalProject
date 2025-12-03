@@ -1,5 +1,5 @@
 from flask_wtf import FlaskForm
-from wtforms import SubmitField, IntegerField, FileField, FloatField, DateField
+from wtforms import SubmitField, IntegerField, FileField, FloatField, DateField, StringField
 from flask_wtf.file import FileAllowed
 from wtforms.validators import DataRequired
 
@@ -24,3 +24,11 @@ class WaterStressForm(FlaskForm):
     start_date = DateField('Fecha inicio', format='%Y-%m-%d', validators=[DataRequired()])
     end_date = DateField('Fecha fin', format='%Y-%m-%d', validators=[DataRequired()])
     submit = SubmitField('Analizar')
+
+class WaterStressPredictForm(FlaskForm):
+    lote = StringField('Lote', validators=[DataRequired()])
+    lat1 = FloatField('Latitud esquina 1', validators=[DataRequired()])
+    lon1 = FloatField('Longitud esquina 1', validators=[DataRequired()])
+    lat2 = FloatField('Latitud esquina 2', validators=[DataRequired()])
+    lon2 = FloatField('Longitud esquina 2', validators=[DataRequired()])
+    submit = SubmitField('Predecir')
