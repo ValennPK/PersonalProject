@@ -45,10 +45,13 @@ print("[INFO] Computing delta days for NDVI…")
 ndvi_df = ndvi_df.sort_values(["lote", "lat", "lon", "fecha"])
 ndvi_df["fecha_prev"] = ndvi_df.groupby(["lote","lat","lon"])['fecha'].shift(1)
 ndvi_df["delta_days"] = (ndvi_df["fecha"] - ndvi_df["fecha_prev"]).dt.days
+ndvi_df["ndvi_prev"] = ndvi_df.groupby(["lote","lat","lon"])["ndvi"].shift(1)
 
 print("[INFO] Removing first NDVI entries (cannot compute delta)…")
 # Remove first NDVI of each pixel (cannot compute delta)
-ndvi_df = ndvi_df.dropna(subset=["delta_days"])
+ndvi_df = ndvi_df.dropna(subset=["delta_days", "ndvi_prev"])
+
+
 
 print("[INFO] Building temporal sequences (30-day windows)…")
 # 5. Build temporal sequences (weather 30 days window)
@@ -69,17 +72,18 @@ for idx, row in ndvi_df.iterrows():
     # Sequence input (30, features)
     X_list.append(w.values)
 
-    # Static features
+    # Static features: ahora incluimos ndvi_prev
     X_static.append([
         row.lat,
         row.lon,
-        row.delta_days
+        row.delta_days,
+        row.ndvi_prev
     ])
 
     y_list.append(row.ndvi)
 
-X_seq = np.array(X_list)
-X_static = np.array(X_static)
+X_seq = np.array(X_list)        # shape (N, 30, features)
+X_static = np.array(X_static)   # shape (N, 4)
 y = np.array(y_list)
 
 print("[INFO] Creating GRU dual-input model…")
@@ -88,7 +92,7 @@ seq_input = layers.Input(shape=(30, X_seq.shape[2]))
 x = layers.GRU(128, return_sequences=False)(seq_input)
 x = layers.Dropout(0.2)(x)
 
-static_input = layers.Input(shape=(X_static.shape[1],))
+static_input = layers.Input(shape=(X_static.shape[1],))  # ahora 4
 s = layers.Dense(32, activation="relu")(static_input)
 
 combined = layers.concatenate([x, s])
@@ -100,20 +104,15 @@ model.compile(optimizer="adam", loss="mse", metrics=["mae"])
 
 print("[INFO] Starting training…")
 # 7. Train model
-early_stop = callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
-hist = model.fit(
-    [X_seq, X_static], y,
-    validation_split=0.2,
-    epochs=100,
-    batch_size=32,
-    callbacks=[early_stop]
-)
+hist = model.fit([X_seq, X_static], y,
+                 validation_split=0.2,
+                 epochs=100, batch_size=32,
+                 callbacks=[callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)])
+
+model.save("app/ai/models/ndvi_predictor_gru2_with_prev.h5")
 
 # 8. Evaluation
 print("[INFO] Evaluating model…")
 eval_results = model.evaluate([X_seq, X_static], y)
 print(f"Evaluation results: {eval_results}")
 
-
-# Save model
-model.save("app/ai/models/ndvi_predictor_gru2.h5")

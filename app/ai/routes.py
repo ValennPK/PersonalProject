@@ -198,7 +198,7 @@ def water_stress():
         WSI_image=wsi_url
     )
 
-@ai.route('/water-stress/predict', methods=['POST', 'GET'])
+@ai.route('/water-stress-predict', methods=['POST', 'GET'])
 @confirmed_required
 def water_stress_predict():
     from app.ai.scripts.water_stress.utilities import (
@@ -208,27 +208,28 @@ def water_stress_predict():
     )
     from datetime import datetime, timedelta
     from flask import flash, url_for, redirect
+    import io
+    import base64
     import os
 
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(BASE_DIR, "models", "ndvi_predictor_gru2.h5")
+    model_path = os.path.join(BASE_DIR, "models", "ndvi_predictor_gru2_with_prev.h5")
 
     model = load_model(model_path, compile=False)
-
-
     form = WaterStressPredictForm()
 
     if form.validate_on_submit():
-        lat1 = form.lat1.data
-        lon1 = form.lon1.data
-        lat2 = form.lat2.data
-        lon2 = form.lon2.data
+        lat1 = float(form.lat1.data)
+        lon1 = float(form.lon1.data)
+        lat2 = float(form.lat2.data)
+        lon2 = float(form.lon2.data)
+        lote = form.lote.data
 
         start = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
-        end = datetime.now(). strftime("%Y%m%d")
+        end = datetime.now().strftime("%Y%m%d")
 
-        # Obtener última imagen NDVI
+        # 1) Obtener última imagen NDVI desde Earth Engine
         res = fetch_NDVI_ee_image(lat1, lon1, lat2, lon2, start, end)
 
         if not res["success"]:
@@ -237,64 +238,185 @@ def water_stress_predict():
 
         ndvi_img, region, ndvi_date = res["data"]
 
-        # Extraer píxeles NDVI
+        # Asegurar ndvi_date como string
+        if hasattr(ndvi_date, "getInfo"):
+            ndvi_date = ndvi_date.getInfo()
+
+        # Reproyectar a resolución razonable (ajusta scale si hace falta)
+        ndvi_img = ndvi_img.reproject(crs='EPSG:4326', scale=10)
+
+        # 2) Extraer píxeles NDVI (sampleRectangle)
         pixels = ndvi_img.sampleRectangle(region=region, defaultValue=0)
-        array = np.array(pixels.get("NDVI").getInfo())
+        raw = pixels.get("NDVI").getInfo()
+
+        # Normalizar diferentes formatos que puede devolver EE (dict o lista)
+        if isinstance(raw, dict):
+            # convertir dict a lista de listas
+            rows = sorted(raw.keys(), key=lambda x: int(x))
+            matrix = []
+            for r in rows:
+                row_dict = raw[r]
+                cols = sorted(row_dict.keys(), key=lambda x: int(x))
+                matrix.append([row_dict[c] for c in cols])
+            array = np.array(matrix, dtype=float)
+        else:
+            # normalmente raw será una lista de listas
+            array = np.array(raw, dtype=float)
+        
+        # Forma y aplanado
+        if array.ndim == 1:
+            # Si por alguna razón es 1D (muy raro), forzamos a 2D
+            array = array.reshape((1, -1))
+
         height, width = array.shape
         flat_pixels = array.flatten().tolist()
 
-        # Ajustar fechas
-        ndvi_date = ndvi_date.getInfo()
+        # 3) Fechas (NDVI date → ventana 30 días)
         ndvi_date_dt = datetime.strptime(ndvi_date, "%Y-%m-%d")
         prev_date_dt = ndvi_date_dt - timedelta(days=30)
 
         start_str = prev_date_dt.strftime("%Y-%m-%d")
         end_str = ndvi_date_dt.strftime("%Y-%m-%d")
 
-        # Obtener ventana climática de 30 días
-        weather_df = fetch_data(lat1, lon1, start_str, end_str)
+        # 4) Obtener ventana climática de 30 días (usamos el centro del ROI)
+        lat = (lat1 + lat2) / 2.0
+        lon = (lon1 + lon2) / 2.0
 
-        if len(weather_df) < 30:
-            flash("No hay suficientes datos climáticos.", "danger")
+        df = fetch_data(lat, lon, start_str, end_str)
+        
+        if df is None or len(df) < 30:
+            return jsonify({"error": "No hay suficientes datos meteorológicos"}), 400
+
+        df = df.sort_values("fecha").tail(30)
+
+        # Columnas en el orden con el que entrenaste el modelo
+        feature_cols = [
+            "precipitacion_mm",
+            "temp_mean_c",
+            "temp_max_c",
+            "temp_min_c",
+            "radiacion_sw_mj_m2",
+            "vel_viento_m_s",
+            "humedad_relativa_pct",
+            "et0_mm",
+        ]
+
+        # 5) Construir weather_seq (1, 30, n_features)
+        weather_seq = df[feature_cols].astype(float).values  # (30, features)
+        weather_seq = np.expand_dims(weather_seq, axis=0).astype(np.float32)  # (1,30,features)
+
+        # 6) Entrada estática (usamos lat/lon centro o los que prefieras)
+        delta_days = 30
+        # 1) ndvi_prev_batch: shape (n_pixels, 1)
+        ndvi_prev_batch = np.array(flat_pixels, dtype=np.float32).reshape(-1, 1)
+
+
+        # 7) Predicción EN BATCH para TODOS los píxeles
+        n_pixels = len(flat_pixels)
+        if n_pixels == 0:
+            flash("La imagen NDVI no contiene píxeles.", "danger")
             return redirect(url_for("ai.water_stress_predict"))
+        
+        print(f"Number of pixels to predict: {n_pixels}")
 
-        # Tomar EXACTAMENTE últimos 30 días
-        weather_seq = weather_df.tail(30).values  # (30, features)
-        weather_seq = weather_seq.reshape(1, 30, weather_seq.shape[1])  # (1, 30, features)
+        # 2) Repetir lat/lon/delta_days
+        lat_batch = np.full((n_pixels, 1), lat, dtype=np.float32)
+        lon_batch = np.full((n_pixels, 1), lon, dtype=np.float32)
+        delta_batch = np.full((n_pixels, 1), delta_days, dtype=np.float32)
 
-        # Entrada estática
-        delta_days = 30  # porque siempre tomaste 30 días
-        static_input = np.array([[lat1, lon1, delta_days]])  # (1, 3)
+        # 3) Unir en el orden EXACTO del entrenamiento
+        static_batch = np.concatenate(
+            [lat_batch, lon_batch, delta_batch, ndvi_prev_batch],
+            axis=1
+        )   # → shape (n_pixels, 4)
+ 
+        # Repetir secuencia y estático para todo el batch
+        weather_batch = np.repeat(weather_seq, n_pixels, axis=0)       # (n,30,features)
 
-        # Predicción por pixel
-        results = []
-        for px in flat_pixels:
-            pred = model.predict([weather_seq, static_input])[0][0]
-            results.append(pred)
+        print(model.input)
+        print(model.input_shape)
+        print(model.inputs)
 
 
-        # --- Reconstruir imagen predicha ---
-        pred_np = np.array(results).reshape((height, width))
+        preds_flat = model.predict([weather_batch, static_batch])
+        # print("test_preds shape:", test_preds.shape)
+        # print("test_preds:", test_preds)
 
-        pred_image = ee.Image(pred_np.tolist()) \
-                       .rename("NDVI_PRED") \
-                       .reproject(ndvi_img.projection()) \
-                       .clip(region)
 
-        # Convertir a URL
-        predicted_url = image_to_url(pred_image, region)
 
-        # Renderizado del template
-        return render_template(
-            "water_stress_predict.html",
-            ndvi_date=ndvi_date.getInfo(),
-            predicted_url=predicted_url
-        )
+        # Ejecutar la predicción de una sola vez (más rápido)
+        # preds = model.predict([weather_batch, static_batch], batch_size=1024)
+        # preds_flat = preds.reshape(-1)  # (56304,)
+        # preds_norm = (preds_flat - preds_flat.min()) / (preds_flat.max() - preds_flat.min())
+        # preds_norm = (preds_flat * 255).astype(np.uint8)
+        # print(f"Raw flat predictions: {preds_flat}")
+
+        # # reconstrucción dinámica usando los valores originales
+        # pred_matrix = preds_flat.reshape((height, width))  # (204, 276)
+        # print(f"predicted matrix : {pred_matrix}")
+        # print(f"Predicted matrix shape: {pred_matrix.shape}")
+
+        # # normalización a 8 bits
+        # norm = (pred_matrix - pred_matrix.min()) / (pred_matrix.max() - pred_matrix.min())
+        # img_array = (norm * 255).astype(np.uint8)
+        # print(f"Predicted image array: {img_array}")
+
+        # # crear imagen
+        # from PIL import Image
+        # img = Image.fromarray(img_array, mode="L")
+
+
+        # img.save("app/ai/miscellaneous/predicted_ndvi.png")
+
+
+        # preds -> shape (n_pixels, 1) o (n_pixels,)
+        # preds_flat = np.asarray(preds).reshape(-1)
+
+        # # 8) Reconstruir la imagen predicha en NumPy
+        # pred_np = preds_flat.astype(float).reshape((height, width))
+
+        # # 9) Convertir la matriz predicha a data URL (PNG) para mostrar en template
+        # def array_to_data_url(arr, cmap=None):
+        #     """
+        #     Normaliza arr a 0-255 y devuelve data URL PNG en escala de grises.
+        #     Si querés aplicar paleta, transformá arr a RGB aquí.
+        #     """
+        #     a = np.array(arr, dtype=float)
+        #     # normalizar robustamente
+        #     minv = np.nanmin(a)
+        #     maxv = np.nanmax(a)
+        #     span = maxv - minv if (maxv - minv) != 0 else 1.0
+        #     norm = (a - minv) / span
+        #     img_uint8 = (255 * norm).astype(np.uint8)
+
+        #     # Crear PIL image (modo 'L' = 8-bit greyscale)
+        #     pil = Image.fromarray(img_uint8, mode='L')
+
+        #     # Opcional: convertir a color usando una paleta
+        #     # pil = pil.convert("P")
+        #     # pil.putpalette(...)
+
+        #     buffer = io.BytesIO()
+        #     pil.save(buffer, format="PNG")
+        #     b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+        #     return f"data:image/png;base64,{b64}"
+
+        # predicted_url = array_to_data_url(pred_np)
+        # print(predicted_url)
+        # # Mantener ndvi_url usando image_to_url (tu función EE)
+        # ndvi_url = image_to_url(ndvi_img, region)
+
+        # # Debug prints (opcionales)
+        # print(f"NDVI shape: {array.shape}, predicted shape: {pred_np.shape}")
+        # print(f"Predicted image (data URL) length: {len(predicted_url)}")
+
+        # # 10) Renderizado del template con la imagen predicha localmente
+        # return render_template(
+        #     "ai/water-stress-predict.html",
+        #     ndvi_date=ndvi_date,
+        #     ndvi_url=ndvi_url,
+        #     predicted_url=predicted_url,
+        #     form=form
+        # )
 
     return render_template("ai/water-stress-predict.html", form=form)
-
-
-
-
-
-    

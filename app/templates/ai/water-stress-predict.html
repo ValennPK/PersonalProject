@@ -32,6 +32,11 @@
             <!-- Campo last_date se ignora en servidor -->
             <input type="hidden" name="last_date" id="last_date" value="2000-01-01">
 
+            <div>
+                <label for="lote" class="form-label fw-bold">Lote:</label>
+                {{ form.lote(class="form-control", id="lote", placeholder="Ingrese el nombre del lote") }}
+            </div>
+
             <div class="mb-3">
                 <label class="form-label fw-bold">Seleccioná un área en el mapa:</label>
                 <div id="map" style="height: 450px; border-radius: 10px;"></div>
@@ -47,28 +52,27 @@
 <div class="card shadow-sm mt-4">
     <div class="card-body">
 
-        {% if img_date %}
+        {% if ndvi_date %}
         <div class="alert alert-info">
             <h5 class="mb-1">Imagen NDVI utilizada:</h5>
-            <p class="mb-2"><strong>Fecha:</strong> {{ img_date }}</p>
+            <p class="mb-2"><strong>Fecha:</strong> {{ ndvi_date }}</p>
         </div>
         {% endif %}
 
-        {% if NDVI_image %}
-        <div class="mt-3">
-            <h4>NDVI más reciente</h4>
-            <img src="{{ NDVI_image }}" alt="NDVI Image" class="img-fluid rounded shadow-sm"/>
-        </div>
-        {% endif %}
-
-        {% if predictions %}
+        {% if ndvi_url%}
         <div class="mt-4">
-            <h4>Predicciones de NDVI ({{ predictions|length }} píxeles)</h4>
-            <pre class="bg-light rounded p-3" style="max-height: 300px; overflow-y: scroll;">
-                {{ predictions|tojson(indent=2) }}
-            </pre>
+          <h4>Imagen NDVI más reciente:</h4>
+          <img src="{{ ndvi_url }}" alt="NDVI Image" class="img-fluid rounded shadow-sm"/>
         </div>
         {% endif %}
+
+        {% if predicted_url %}
+        <div class="mt-4">
+          <h4>Imagen NDVI Predicha:</h4>
+          <img src="{{ predicted_url }}" alt="Predicted NDVI Image" class="img-fluid rounded shadow-sm"/>
+        </div>
+        {% endif %}
+        
     </div>
 </div>
 {% endblock %}
